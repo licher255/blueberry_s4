@@ -1,0 +1,34 @@
+# ROS2
+build/
+install/
+log/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# CAN
+*.log
+/tmp/can_log.txt
+
+# OS
+.DS_Store
+Thumbs.db
+
+# clash
+clash/
+clash-for-linux-install/
+src/YUHESEN-FW-MAX
+src/YUHESEN-FW-MAX.bak

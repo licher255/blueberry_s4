@@ -1,0 +1,66 @@
+{
+  "configById": {
+    "3D!1": {
+      "cameraState": {
+        "distance": 10,
+        "perspective": true,
+        "phi": 60,
+        "target": [0, 0, 0],
+        "targetOffset": [0, 0, 0],
+        "theta": 45,
+        "fovy": 45,
+        "near": 0.1,
+        "far": 5000
+      },
+      "followMode": "follow-position",
+      "followTf": "base_link",
+      "scene": {},
+      "transforms": {},
+      "topics": {
+        "/tf": { "visible": true },
+        "/scan": { "visible": false },
+        "/livox/lidar": { "visible": false }
+      },
+      "layers": [
+        { "visible": true, "frameLocked": true, "label": "Grid", "instanceId": "grid" }
+      ]
+    },
+    "RawMessages!2": {
+      "topicPath": "/vehicle/state",
+      "diffMode": "raw",
+      "diffTopicPath": ""
+    },
+    "Log!3": {
+      "topicPath": "/rosout",
+      "minLogLevel": 1
+    },
+    "Teleop!4": {
+      "topicPath": "/cmd_vel",
+      "publishRate": 10,
+      "upButton": { "field": "linear-x", "value": 1 },
+      "downButton": { "field": "linear-x", "value": -1 },
+      "leftButton": { "field": "angular-z", "value": 1 },
+      "rightButton": { "field": "angular-z", "value": -1 }
+    }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "playbackConfig": {
+    "speed": 1
+  },
+  "layout": {
+    "first": {
+      "first": "3D!1",
+      "second": "Teleop!4",
+      "direction": "column",
+      "splitPercentage": 70
+    },
+    "second": {
+      "first": "RawMessages!2",
+      "second": "Log!3",
+      "direction": "row"
+    },
+    "direction": "row",
+    "splitPercentage": 70
+  }
+}

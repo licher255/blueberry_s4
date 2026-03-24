@@ -1,0 +1,141 @@
+# Blueberry S4 - 硬件配置文件
+# 这个文件定义了所有硬件的连接参数
+# 修改后重启 CAN 节点即可生效
+
+# ==================== 系统信息 ====================
+system:
+  name: "S4"
+  version: "1.0.0"
+  description: "YUHESEN FW-Max + RealMan + Kinco + 7x D405 + Livox"
+
+# ==================== CAN 总线配置 ====================
+can_interfaces:
+  # CAN 接口 1: AGV (YUHESEN FW-Max)
+  - name: "can_agv"
+    type: "can2.0"           # CAN 类型: can2.0 或 canfd
+    channel: 0               # 物理通道号
+    device: "can0"           # Linux 设备名
+    bitrate: 500000          # 波特率: 500K
+    dbitrate: 0              # CAN-FD 数据段波特率 (CAN 2.0 设为 0)
+    sample_point: 0.875      # 采样点 (可选)
+    
+  # CAN 接口 2: CAN-FD (WHJ + Kinco)
+  - name: "can_fd"
+    type: "canfd"            # CAN-FD 类型
+    channel: 1               # 物理通道号
+    device: "can1"           # Linux 设备名
+    bitrate: 1000000         # 仲裁段波特率: 1M
+    dbitrate: 5000000        # 数据段波特率: 5M (CAN-FD 特性)
+    sample_point: 0.8        # 仲裁段采样点
+    dsample_point: 0.75      # 数据段采样点
+
+# ==================== 设备配置 ====================
+devices:
+  # AGV 配置
+  # TODO: CAN ID 需要通过测试确定
+  agv:
+    name: "FW-Max"
+    manufacturer: "YUHESEN"
+    enabled: true
+    can_interface: "can_agv"
+    can_id:
+      # 以下 ID 为猜测值，需通过 candump 测试确定
+      tx_motion: 0x100       # 运动控制指令 (待确认)
+      tx_enable: 0x101       # 电机使能 (待确认)
+      tx_disable: 0x102      # 电机禁用 (待确认)
+      rx_state: 0x200        # 车辆状态反馈 (待确认)
+      rx_system: 0x202       # 系统状态反馈 (待确认)
+      # 测试方法:
+      # 1. 连接 AGV CAN
+      # 2. 运行: candump can0
+      # 3. 观察 AGV 上电/运动时发出的 CAN ID
+    parameters:
+      max_speed: 2.0         # m/s
+      max_steering: 30.0     # 度
+      wheel_base: 0.5        # 轴距 (米)
+      track_width: 0.4       # 轮距 (米)
+    
+  # RealMan WHJ 升降机构
+  # CAN FD ID: 7
+  whj_lifter:
+    name: "RealMan WHJ"
+    manufacturer: "RealMan"
+    enabled: true
+    can_interface: "can_fd"
+    can_id:
+      node_id: 7             # CAN FD 节点 ID
+      tx_command: 0x607      # 发送指令: 0x600 + NodeID
+      rx_status: 0x587       # 接收状态: 0x580 + NodeID
+      # SDO 通信
+      sdo_tx: 0x607          # SDO 请求 (客户端->服务器)
+      sdo_rx: 0x587          # SDO 响应 (服务器->客户端)
+      # PDO 通信 (如果使用)
+      pdo_tx: [0x187, 0x287, 0x387, 0x487]  # TPDO1-4
+      pdo_rx: [0x207, 0x307, 0x407, 0x507]  # RPDO1-4
+    parameters:
+      max_height: 0.5        # 最大升降高度 (米)
+      min_height: 0.0        # 最小高度
+      speed: 0.1             # 升降速度 (m/s)
+    
+  # Kinco 伺服电机
+  # CAN ID: 1
+  kinco_servo:
+    name: "Kinco Servo"
+    manufacturer: "Kinco"
+    enabled: true
+    can_interface: "can_fd"
+    can_id:
+      node_id: 1             # 伺服节点 ID
+      base_id: 0x601         # 基础 ID: 0x600 + NodeID
+      # SDO 通信 (标准 CANopen)
+      sdo_tx: 0x601          # SDO 客户端发送
+      sdo_rx: 0x581          # SDO 服务器响应
+      # NMT 通信
+      nmt_tx: 0x000          # NMT 指令 (广播)
+      nmt_rx: 0x701          # NMT 心跳: 0x700 + NodeID
+      # PDO 通信 (可配置)
+      pdo_tx: [0x181, 0x281, 0x381, 0x481]  # TPDO1-4
+      pdo_rx: [0x201, 0x301, 0x401, 0x501]  # RPDO1-4
+      node_count: 1          # 伺服数量
+    parameters:
+      max_rpm: 3000
+      acceleration: 1000     # rpm/s
+      
+# ==================== 相机配置 ====================
+cameras:
+  # Intel RealSense D405
+  d405_array:
+    count: 7
+    enabled: true
+    usb_port: "3.0"          # USB 3.0 要求
+    resolution:
+      color: [1280, 720]     # 彩色分辨率
+      depth: [848, 480]      # 深度分辨率
+    fps: 30
+    exposure:
+      auto: true
+      value: 10000           # 微秒 (auto=false 时生效)
+    
+# ==================== 激光雷达配置 ====================
+lidar:
+  livox:
+    name: "Livox Mid-360"
+    manufacturer: "Livox"
+    enabled: true
+    connection: "ethernet"   # 连接方式: ethernet
+    ip: "192.168.1.100"      # Livox IP (默认)
+    port: 56000              # 数据端口
+    publish_rate: 10         # Hz
+    
+# ==================== 调试配置 ====================
+debug:
+  # CAN 调试
+  can_debug:
+    enabled: false           # 是否打印所有 CAN 帧
+    log_file: "/tmp/can_log.txt"
+    
+  # 仿真模式 (无需硬件)
+  simulation:
+    enabled: false           # true 时不会连接真实硬件
+    agv_mock: true
+    camera_mock: true

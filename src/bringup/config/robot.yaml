@@ -1,0 +1,31 @@
+# S4 - 机器人配置
+# 这个文件被 launch 文件加载
+
+/**:
+  ros__parameters:
+    # 系统信息
+    robot_name: "blueberry_s4"
+    version: "0.1.0"
+    
+    # CAN 接口配置
+    can:
+      agv:
+        interface: "can0"
+        bitrate: 500000
+        type: "can2.0"
+      devices:
+        interface: "can1"
+        bitrate: 1000000
+        dbitrate: 5000000
+        type: "canfd"
+    
+    # 硬件使能
+    hardware:
+      agv: true
+      whj_lifter: false  # 待开发
+      kinco_servo: false  # 待开发
+      cameras: false
+      lidar: false
+    
+    # 仿真模式
+    simulation: false
