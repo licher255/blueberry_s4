@@ -30,14 +30,12 @@ Blueberry_s4/                    # ⭐ ROS2 工作空间根目录
 │   └── peak-linux-driver-8.18.0/# PEAK USB-CAN 驱动
 │
 ├── scripts/                     # 实用脚本
-│   ├── run.sh                   # 🆕 一键运行（推荐）
-│   ├── start_robot.sh           # 🆕 启动机器人
-│   ├── stop_robot.sh            # 🆕 停止机器人
-│   ├── status.sh                # 🆕 系统状态
-│   ├── can_manager.sh           # 🆕 CAN 设备管理
-│   ├── install_can_service.sh   # 🆕 安装 CAN 服务
-│   ├── setup_ros2_env.sh        # ROS2 环境安装
-│   └── build.sh                 # 编译脚本
+│   ├── s4                       # 🆕 主控 CLI (check/dev/build/stop/status/can)
+│   └── can_manager.sh           # 🆕 CAN 设备管理
+│
+├── web_dashboard/               # 🆕 Web 仪表盘
+│   ├── index.html               # 监控页面
+│   └── start_web_dashboard.sh   # 启动脚本
 │
 ├── config/                      # 硬件配置文件
 │   ├── hardware_profile.yaml    # 硬件参数
@@ -61,7 +59,7 @@ Blueberry_s4/                    # ⭐ ROS2 工作空间根目录
 └── README.md                    # 本文件
 ```
 
----
+
 
 ## 🚀 快速开始
 
@@ -69,47 +67,55 @@ Blueberry_s4/                    # ⭐ ROS2 工作空间根目录
 
 这台 Jetson 有其他同事的项目在运行，S4 项目使用**完全隔离**的部署方案。
 
-#### 🚀 快速部署（3 步）
+#### 🚀 快速开始（1 步）
 
 ```bash
-# 1. 检查环境
-bash scripts/jetson_precheck.sh
-
-# 2. 一键部署（创建 ~/s4_ws，与现有项目隔离）
-bash scripts/deploy_to_jetson.sh
-
-# 3. 启动远程可视化
-~/s4_ws/start_remote_viz.sh
+ ./scripts/start_agv_test.sh
 ```
 
-#### 💻 在你的电脑上查看
+#### 💻 Web Dashboard（浏览器查看）
 
-1. 打开浏览器：https://studio.foxglove.dev
-2. 点击 "Open connection"
-3. 输入 Jetson IP：`ws://<jetson-ip>:8765`
+启动 Web 仪表盘：
 
-🎉 现在你可以在浏览器中实时查看 Jetson 上的 ROS2 数据！
+```bash
+# 方式 1: 使用脚本
+bash web_dashboard/start_web_dashboard.sh
+
+# 方式 2: 手动启动
+cd web_dashboard
+python3 -m http.server 8080 &
+ros2 launch rosbridge_server rosbridge_websocket_launch.xml port:=9091
+```
+
+然后在浏览器打开：`http://<jetson-ip>:8080`
+
+支持的功能：
+- 🎯 实时运动状态（速度、转向角、电压）
+- 📡 ROS2 话题列表
+- 📝 系统日志
+
 
 #### 📋 常用命令
 
 ```bash
-# 启动 S4 仿真模式（测试，不连接硬件）
-source ~/s4_ws/start_s4.sh
-ros2 launch bringup robot.launch.py sim:=true
+# 检查环境
+./scripts/s4 check
 
-# 停止 S4
-bash ~/s4_ws/stop_s4.sh
+# 启动
+./scripts/s4 dev          # 硬件模式
+./scripts/s4 dev sim      # 仿真模式
+./scripts/s4 dev teleop   # 硬件+键盘遥控
 
-# 完全删除（零影响）
-rm -rf ~/s4_ws
+# 停止
+./scripts/s4 stop
+
+# 查看状态
+./scripts/s4 status
+
+# CAN 管理
+sudo ./scripts/s4 can auto     # 自动配置 CAN
+./scripts/s4 can status        # 查看 CAN 状态
 ```
-
-**隔离措施**：
-- ✅ 独立工作空间 `~/s4_ws`
-- ✅ 独立 `ROS_DOMAIN_ID=42`（网络隔离）
-- ✅ 远程可视化（Foxglove Web）
-
-详细指南：[远程访问指南](docs/deployment/remote_access_guide.md) | [安全部署](docs/deployment/safe_deployment_guide.md)
 
 ---
 
@@ -178,12 +184,11 @@ source install/setup.bash
 
 ```bash
 # 一键启动（自动检查 CAN、编译、启动）
-bash scripts/run.sh
+./scripts/s4 dev
 
 # 模式选择
-bash scripts/run.sh sim      # 仿真模式
-bash scripts/run.sh hw       # 硬件模式（默认）
-bash scripts/run.sh teleop   # 硬件+键盘遥控
+./scripts/s4 dev sim      # 仿真模式
+./scripts/s4 dev teleop   # 硬件+键盘遥控
 ```
 
 #### 手动启动
@@ -220,34 +225,21 @@ S4 项目支持多种 CAN 设备，系统会自动检测和配置。
 
 ```bash
 # 查看 CAN 设备状态
-bash scripts/can_manager.sh status
+./scripts/s4 can status
 
 # 自动检测并配置所有 CAN 设备
-sudo bash scripts/can_manager.sh auto
+sudo ./scripts/s4 can auto
 
 # 配置指定 CAN 接口
-sudo bash scripts/can_manager.sh setup can2 500000
+sudo ./scripts/s4 can setup can2 500000
 
 # 安装 PEAK USB-CAN 驱动（如需要）
-sudo bash scripts/can_manager.sh install-driver
-
-# 安装开机自动配置服务
-sudo bash scripts/install_can_service.sh
+sudo ./scripts/s4 can install-driver
 ```
 
 ### 开机自动配置
 
-安装服务后，CAN 设备将在开机时自动配置：
 
-```bash
-# 安装服务
-sudo bash scripts/install_can_service.sh
-
-# 管理服务
-sudo systemctl status blueberry-can    # 查看状态
-sudo systemctl start blueberry-can     # 手动运行
-sudo journalctl -u blueberry-can -f    # 查看日志
-```
 
 ### 驱动本地化
 
@@ -389,10 +381,21 @@ ros2 param set /agv_node max_speed 1.5  # 设置参数
 
 ## 📚 文档
 
-- [ROS2 环境搭建](./docs/ros2_setup/ros2_beginner_guide.md) - 从零开始
-- [硬件配置指南](./config/README.md) - CAN/设备配置
-- [系统架构设计](./docs/architecture_recommendation.md) - 整体方案
+### 入门指南
+- [ROS2 环境搭建](./docs/ros2_setup/ros2_beginner_guide.md) - 从零开始安装 ROS2
+- [主控脚本使用](./scripts/s4) - `./s4` 命令详解
+
+### 硬件配置
+- [硬件配置指南](./config/README.md) - CAN/设备参数配置
 - [CAN 架构对比](./docs/can_design/can_architecture_comparison.md) - CAN 方案选型
+
+### 可视化
+- [Web Dashboard](./web_dashboard/README.md) - 浏览器监控仪表盘 ⭐
+- [远程访问指南](./docs/deployment/remote_access_guide.md) - Foxglove/Web 远程连接
+
+### 开发
+- [系统架构设计](./docs/architecture_recommendation.md) - 整体技术方案
+- [PROJECT_LOG.md](./PROJECT_LOG.md) - 开发日志
 
 ---
 

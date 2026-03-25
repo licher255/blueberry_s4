@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>4WS AGV Robot Control Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/roslib@1/build/roslib.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%); min-height: 100vh; color: #e0e0e0; padding: 20px; }
+.container { max-width: 1400px; margin: 0 auto; }
+h1 { text-align: center; color: #00d4ff; text-shadow: 0 0 20px rgba(0, 212, 255, 0.5); margin-bottom: 30px; font-size: 2.5rem; }
+h2 { color: #a855f7; margin-bottom: 20px; font-size: 1.3rem; padding-bottom: 10px; border-bottom: 2px solid rgba(168, 85, 247, 0.4); }
+.dashboard-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 25px; }
+@media (max-width: 1024px) { .dashboard-grid { grid-template-columns: 1fr; } }
+.panel { background: rgba(20, 20, 40, 0.8); border-radius: 15px; padding: 25px; border: 1px solid rgba(100, 100, 200, 0.3); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3); backdrop-filter: blur(10px); }
+.connection-row { display: flex; gap: 15px; align-items: center; flex-wrap: wrap; }
+.input-group { flex: 1; min-width: 250px; }
+.input-group label { display: block; margin-bottom: 8px; color: #888; font-size: 0.9rem; }
+input[type="text"] { width: 100%; padding: 12px 15px; border: 1px solid rgba(100, 100, 200, 0.4); border-radius: 8px; background: rgba(10, 10, 30, 0.8); color: #e0e0e0; font-size: 1rem; }
+.btn { padding: 12px 25px; border: none; border-radius: 8px; font-size: 1rem; font-weight: 600; cursor: pointer; transition: all 0.3s ease; text-transform: uppercase; letter-spacing: 0.5px; }
+.btn-connect { background: linear-gradient(135deg, #00d4ff, #0099cc); color: #fff; }
+.btn-gear { flex: 1; padding: 15px 20px; background: rgba(100, 100, 200, 0.2); color: #e0e0e0; border: 2px solid rgba(100, 100, 200, 0.4); }
+.btn-gear.active { background: linear-gradient(135deg, #a855f7, #7c3aed); border-color: #a855f7; box-shadow: 0 0 15px rgba(168, 85, 247, 0.5); }
+.btn-stop { background: linear-gradient(135deg, #ef4444, #dc2626); color: #fff; width: 100%; padding: 20px; font-size: 1.3rem; margin-top: 15px; }
+.btn-clear { background: linear-gradient(135deg, #22c55e, #16a34a); color: #fff; width: 100%; padding: 15px; margin-top: 10px; }
+.btn-motion-stop { background: linear-gradient(135deg, #f59e0b, #d97706); color: #fff; width: 100%; padding: 15px; margin-top: 10px; }
+.slider-container { margin: 25px 0; }
+.slider-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.slider-label { color: #888; font-size: 0.95rem; }
+.slider-value { color: #00d4ff; font-weight: 600; font-size: 1.2rem; font-family: monospace; }
+input[type="range"] { width: 100%; height: 10px; border-radius: 5px; background: linear-gradient(90deg, #ef4444 0%, #22c55e 50%, #ef4444 100%); outline: none; -webkit-appearance: none; }
+input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 24px; height: 24px; border-radius: 50%; background: #00d4ff; cursor: pointer; box-shadow: 0 0 10px rgba(0, 212, 255, 0.5); }
+.gear-buttons { display: flex; gap: 10px; margin-top: 10px; }
+.status-indicator { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-left: 10px; }
+.connected { background: #22c55e; box-shadow: 0 0 10px #22c55e; }
+.disconnected { background: #ef4444; }
+.info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+.info-item { background: rgba(10, 10, 30, 0.6); padding: 15px; border-radius: 10px; border: 1px solid rgba(100, 100, 200, 0.3); }
+.info-label { font-size: 0.85rem; color: #888; margin-bottom: 5px; }
+.info-value { font-size: 1.4rem; color: #00d4ff; font-weight: 600; font-family: monospace; }
+.log-container { background: rgba(10, 10, 30, 0.8); border-radius: 10px; padding: 15px; height: 200px; overflow-y: auto; font-family: monospace; font-size: 0.9rem; border: 1px solid rgba(100, 100, 200, 0.3); }
+.log-entry { padding: 4px 0; border-bottom: 1px solid rgba(100, 100, 200, 0.1); }
+.log-entry.error { color: #ef4444; }
+.log-entry.success { color: #22c55e; }
+.log-entry.warn { color: #f59e0b; }
+.full-width { grid-column: 1 / -1; }
+</style>
+</head>
+<body>
+<div class="container">
+<h1>4WS AGV Robot Control Dashboard</h1>
+<div class="dashboard-grid">
+<div class="panel">
+<h2>Connection</h2>
+<div class="connection-row">
+<div class="input-group">
+<label>WebSocket URL</label>
+<input type="text" id="wsUrl" value="ws://localhost:9091">
+</div>
+<button class="btn btn-connect" id="connectBtn" onclick="toggleConnection()">Connect</button>
+<span id="connStatus" class="status-indicator disconnected"></span>
+</div>
+</div>
+<div class="panel">
+<h2>Vehicle State</h2>
+<div class="info-grid">
+<div class="info-item"><div class="info-label">Linear X</div><div class="info-value" id="linearX">0.00 m/s</div></div>
+<div class="info-item"><div class="info-label">Angular Z</div><div class="info-value" id="angularZ">0.00 rad/s</div></div>
+<div class="info-item"><div class="info-label">Battery Voltage</div><div class="info-value" id="batVoltage">-- V</div></div>
+<div class="info-item"><div class="info-label">Battery SOC</div><div class="info-value" id="batSoc">-- %</div></div>
+<div class="info-item"><div class="info-label">Gear</div><div class="info-value" id="gearStatus">4T4D</div></div>
+<div class="info-item"><div class="info-label">Wheel LF</div><div class="info-value" id="wheelLF">0.00</div></div>
+<div class="info-item"><div class="info-label">Wheel RF</div><div class="info-value" id="wheelRF">0.00</div></div>
+<div class="info-item"><div class="info-label">Wheel LR</div><div class="info-value" id="wheelLR">0.00</div></div>
+<div class="info-item"><div class="info-label">Wheel RR</div><div class="info-value" id="wheelRR">0.00</div></div>
+</div>
+</div>
+<div class="panel">
+<h2>Manual Control</h2>
+<div class="slider-container">
+<div class="slider-header"><span class="slider-label">Linear Speed (m/s)</span><span class="slider-value" id="linearVal">0.0</span></div>
+<input type="range" id="linearSpeed" min="-2.0" max="2.0" step="0.1" value="0" oninput="updateSliderDisplay()" onchange="sendCommand()">
+</div>
+<div class="slider-container">
+<div class="slider-header"><span class="slider-label">Angular Speed (rad/s)</span><span class="slider-value" id="angularVal">0.0</span></div>
+<input type="range" id="angularSpeed" min="-1.0" max="1.0" step="0.1" value="0" oninput="updateSliderDisplay()" onchange="sendCommand()">
+</div>
+<div style="margin-top: 20px;"><label style="color: #888; font-size: 0.9rem;">Gear Selection (YUHESEN Protocol)</label>
+<div class="gear-buttons">
+<button class="btn btn-gear" id="gear0" onclick="setGear(0)">DISABLE</button>
+<button class="btn btn-gear" id="gear1" onclick="setGear(1)">PARK</button>
+<button class="btn btn-gear" id="gear2" onclick="setGear(2)">NEUTRAL</button>
+<button class="btn btn-gear active" id="gear6" onclick="setGear(6)">4T4D</button>
+<button class="btn btn-gear" id="gear8" onclick="setGear(8)">LATERAL</button>
+</div>
+<div style="font-size: 0.75rem; color: #666; margin-top: 5px;">4T4D = Four-wheel steering + Four-wheel drive (normal driving)</div>
+</div>
+<button class="btn btn-stop" onclick="emergencyStop()">EMERGENCY STOP</button>
+<button class="btn btn-clear" onclick="clearEstop()">Clear E-Stop</button>
+<button class="btn btn-motion-stop" onclick="stopMotion()">STOP Motion</button>
+</div>
+<div class="panel full-width">
+<h2>System Log</h2>
+<div class="log-container" id="systemLog"></div>
+</div>
+</div>
+</div>
+<script>
+let ros = null;
+let cmdPublisher = null;
+let chassisSubscriber = null;
+let isConnected = false;
+let currentGear = 6;  // Default to 4T4D mode (four-wheel steering + four-wheel drive)
+let estopActive = false;
+
+function init() { addLog('Dashboard initialized', 'info'); }
+
+function toggleConnection() {
+    const url = document.getElementById('wsUrl').value;
+    const btn = document.getElementById('connectBtn');
+    const status = document.getElementById('connStatus');
+    if (isConnected) { ros.close(); return; }
+    addLog('Connecting to ' + url, 'info');
+    ros = new ROSLIB.Ros({ url: url });
+    ros.on('connection', function() {
+        isConnected = true;
+        status.className = 'status-indicator connected';
+        btn.textContent = 'Disconnect';
+        addLog('Connected to ROS2', 'success');
+        cmdPublisher = new ROSLIB.Topic({ ros: ros, name: '/ctrl_cmd', messageType: 'yhs_can_interfaces/msg/CtrlCmd' });
+        ioPublisher = new ROSLIB.Topic({ ros: ros, name: '/io_cmd', messageType: 'yhs_can_interfaces/msg/IoCmd' });
+        chassisSubscriber = new ROSLIB.Topic({ ros: ros, name: '/chassis_info_fb', messageType: 'yhs_can_interfaces/msg/ChassisInfoFb' });
+        chassisSubscriber.subscribe(function(msg) { updateVehicleState(msg); });
+        // Send unlock sequence to enable vehicle control
+        sendUnlockSequence();
+    });
+    ros.on('error', function(error) { addLog('Connection error', 'error'); });
+    ros.on('close', function() {
+        isConnected = false;
+        status.className = 'status-indicator disconnected';
+        btn.textContent = 'Connect';
+        addLog('Disconnected from ROS2', 'warn');
+    });
+}
+
+function updateVehicleState(msg) {
+    if (msg.ctrl_fb) {
+        document.getElementById('linearX').textContent = msg.ctrl_fb.ctrl_fb_x_linear.toFixed(2) + ' m/s';
+        document.getElementById('angularZ').textContent = msg.ctrl_fb.ctrl_fb_z_angular.toFixed(2) + ' rad/s';
+        const gearNames = {0: 'DISABLE', 1: 'PARK', 2: 'NEUTRAL', 6: '4T4D', 8: 'LATERAL'};
+        document.getElementById('gearStatus').textContent = gearNames[msg.ctrl_fb.ctrl_fb_gear] || 'UNKNOWN';
+    }
+    if (msg.bms_fb) { document.getElementById('batVoltage').textContent = msg.bms_fb.bms_fb_voltage.toFixed(1) + ' V'; }
+    if (msg.bms_flag_fb) { document.getElementById('batSoc').textContent = msg.bms_flag_fb.bms_flag_fb_soc + ' %'; }
+    if (msg.wheel_info_fb) {
+        document.getElementById('wheelLF').textContent = msg.wheel_info_fb.wheel_info_fb_lf_speed.toFixed(2);
+        document.getElementById('wheelRF').textContent = msg.wheel_info_fb.wheel_info_fb_rf_speed.toFixed(2);
+        document.getElementById('wheelLR').textContent = msg.wheel_info_fb.wheel_info_fb_lr_speed.toFixed(2);
+        document.getElementById('wheelRR').textContent = msg.wheel_info_fb.wheel_info_fb_rr_speed.toFixed(2);
+    }
+}
+
+function setGear(gear) {
+    currentGear = gear;
+    document.getElementById('gear0').className = 'btn btn-gear' + (gear === 0 ? ' active' : '');
+    document.getElementById('gear1').className = 'btn btn-gear' + (gear === 1 ? ' active' : '');
+    document.getElementById('gear2').className = 'btn btn-gear' + (gear === 2 ? ' active' : '');
+    document.getElementById('gear6').className = 'btn btn-gear' + (gear === 6 ? ' active' : '');
+    document.getElementById('gear8').className = 'btn btn-gear' + (gear === 8 ? ' active' : '');
+    if (isConnected && !estopActive) { sendCommand(); }
+}
+
+function sendUnlockSequence() {
+    addLog('Sending unlock sequence...', 'info');
+    // Unlock sequence per YUHESEN protocol: 0x02 -> 0x02 -> 0x00 -> 0x00 with 20ms intervals
+    const sequence = [{unlock: true, lamp: true}, {unlock: true, lamp: true}, {unlock: false, lamp: true}, {unlock: false, lamp: true}];
+    let step = 0;
+    function sendStep() {
+        if (step < sequence.length && isConnected) {
+            const ioCmd = new ROSLIB.Message({
+                io_cmd_unlock: sequence[step].unlock,
+                io_cmd_lamp_ctrl: sequence[step].lamp
+            });
+            ioPublisher.publish(ioCmd);
+            addLog('Unlock step ' + step + ': unlock=' + sequence[step].unlock, 'info');
+            step++;
+            setTimeout(sendStep, 20); // 20ms interval
+        } else {
+            addLog('Unlock sequence complete - vehicle ready for control', 'success');
+            // Continue sending unlock=true at 10Hz to maintain unlock state
+            setInterval(() => {
+                if (isConnected) {
+                    ioPublisher.publish(new ROSLIB.Message({ io_cmd_unlock: true, io_cmd_lamp_ctrl: true }));
+                }
+            }, 100);
+        }
+    }
+    sendStep();
+}
+
+function sendCommand() {
+    if (!isConnected || estopActive) return;
+    const linearX = parseFloat(document.getElementById('linearSpeed').value);
+    const angularZ = parseFloat(document.getElementById('angularSpeed').value);
+    const cmd = new ROSLIB.Message({ ctrl_cmd_gear: currentGear, ctrl_cmd_x_linear: linearX, ctrl_cmd_z_angular: angularZ, ctrl_cmd_y_linear: 0.0 });
+    cmdPublisher.publish(cmd);
+}
+
+function emergencyStop() {
+    estopActive = true;
+    if (isConnected) {
+        const cmd = new ROSLIB.Message({ ctrl_cmd_gear: 0, ctrl_cmd_x_linear: 0, ctrl_cmd_z_angular: 0, ctrl_cmd_y_linear: 0 });
+        cmdPublisher.publish(cmd);
+    }
+    document.getElementById('linearSpeed').value = 0;
+    document.getElementById('angularSpeed').value = 0;
+    updateSliderDisplay();
+    addLog('EMERGENCY STOP ACTIVATED', 'error');
+}
+
+function clearEstop() {
+    estopActive = false;
+    addLog('E-Stop cleared', 'success');
+}
+
+function stopMotion() {
+    document.getElementById('linearSpeed').value = 0;
+    document.getElementById('angularSpeed').value = 0;
+    updateSliderDisplay();
+    sendCommand();
+    addLog('Motion stopped', 'info');
+}
+
+function updateSliderDisplay() {
+    const lin = document.getElementById('linearSpeed').value;
+    const ang = document.getElementById('angularSpeed').value;
+    document.getElementById('linearVal').textContent = parseFloat(lin).toFixed(1);
+    document.getElementById('angularVal').textContent = parseFloat(ang).toFixed(1);
+}
+
+function addLog(message, type) {
+    const log = document.getElementById('systemLog');
+    const entry = document.createElement('div');
+    entry.className = 'log-entry ' + type;
+    const time = new Date().toLocaleTimeString();
+    entry.textContent = '[' + time + '] ' + message;
+    log.appendChild(entry);
+    log.scrollTop = log.scrollHeight;
+}
+
+document.addEventListener('keydown', function(e) {
+    if (!isConnected || estopActive) return;
+    const linSlider = document.getElementById('linearSpeed');
+    const angSlider = document.getElementById('angularSpeed');
+    let changed = false;
+    switch(e.key) {
+        case 'w': case 'ArrowUp': linSlider.value = Math.min(2, parseFloat(linSlider.value) + 0.1); changed = true; break;
+        case 's': case 'ArrowDown': linSlider.value = Math.max(-2, parseFloat(linSlider.value) - 0.1); changed = true; break;
+        case 'a': case 'ArrowLeft': angSlider.value = Math.max(-1, parseFloat(angSlider.value) - 0.1); changed = true; break;
+        case 'd': case 'ArrowRight': angSlider.value = Math.min(1, parseFloat(angSlider.value) + 0.1); changed = true; break;
+        case ' ': stopMotion(); break;
+    }
+    if (changed) { updateSliderDisplay(); sendCommand(); }
+});
+
+window.onload = init;
+</script>
+</body>
+</html>

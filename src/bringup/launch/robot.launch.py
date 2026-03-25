@@ -7,7 +7,7 @@ S4 - 主启动文件
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, TextSubstitution
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.substitutions import FindPackageShare
 from launch_ros.actions import Node
@@ -59,7 +59,7 @@ def generate_launch_description():
     # CAN 接口配置
     can_agv_arg = DeclareLaunchArgument(
         'can_agv_interface',
-        default_value='can0',
+        default_value='can2',  # AGV 实际连接在 can2
         description='CAN interface for AGV'
     )
     
@@ -82,15 +82,14 @@ def generate_launch_description():
     
     # ==================== 节点定义 ====================
     
-    # AGV 节点 (YUHESEN FW-Max)
+    # AGV 节点 (YUHESEN FW-Max) - 使用官方 C++ 驱动
+    # 注意：LaunchConfiguration 需要正确传递参数
     agv_node = Node(
-        package='fw_max_can',
-        executable='can_bridge_py',
+        package='yhs_can_control',
+        executable='yhs_can_control_node',
         name='agv_node',
         parameters=[{
-            'can_interface': can_agv_interface,
-            'can_bitrate': 500000,
-            'simulation': sim,
+            'can_name': 'can2',  # AGV 实际连接在 can2
         }],
         condition=IfCondition(use_agv),
         output='screen',
@@ -130,15 +129,15 @@ def generate_launch_description():
     )
     use_teleop = LaunchConfiguration('use_teleop')
     
-    # 键盘遥控节点 (可选)
-    teleop_node = Node(
-        package='fw_max_can',
-        executable='teleop_keyboard',
-        name='teleop_keyboard',
-        output='screen',
-        condition=IfCondition(use_teleop),
-        prefix='xterm -e',  # 在独立终端中运行
-    )
+    # 键盘遥控节点 (待适配官方驱动)
+    # teleop_node = Node(
+    #     package='fw_max_can',
+    #     executable='teleop_keyboard',
+    #     name='teleop_keyboard',
+    #     output='screen',
+    #     condition=IfCondition(use_teleop),
+    #     prefix='xterm -e',
+    # )
     
     # ==================== 组装启动描述 ====================
     
@@ -158,7 +157,7 @@ def generate_launch_description():
         agv_node,
         # whj_node,  # 待开发
         # kinco_node,  # 待开发
-        teleop_node,
+        # teleop_node,  # 待适配官方驱动
     ])
     
     return ld

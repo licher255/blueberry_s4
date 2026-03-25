@@ -1,0 +1,882 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AGV 安全测试控制面板</title>
+<script src="https://cdn.jsdelivr.net/npm/roslib@1/build/roslib.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { 
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%); 
+    min-height: 100vh; 
+    color: #e0e0e0; 
+    padding: 20px; 
+}
+.container { max-width: 1200px; margin: 0 auto; }
+h1 { 
+    text-align: center; 
+    color: #00d4ff; 
+    text-shadow: 0 0 20px rgba(0, 212, 255, 0.5); 
+    margin-bottom: 20px; 
+    font-size: 2rem; 
+}
+.warning-banner {
+    background: linear-gradient(135deg, #ff6b6b, #ee5a5a);
+    color: white;
+    padding: 15px;
+    border-radius: 10px;
+    text-align: center;
+    margin-bottom: 20px;
+    font-weight: bold;
+    box-shadow: 0 4px 15px rgba(238, 90, 90, 0.4);
+}
+.dashboard-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+@media (max-width: 900px) { .dashboard-grid { grid-template-columns: 1fr; } }
+.panel { 
+    background: rgba(20, 20, 40, 0.9); 
+    border-radius: 15px; 
+    padding: 20px; 
+    border: 1px solid rgba(100, 100, 200, 0.3); 
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3); 
+}
+h2 { 
+    color: #a855f7; 
+    margin-bottom: 15px; 
+    font-size: 1.2rem; 
+    padding-bottom: 10px; 
+    border-bottom: 2px solid rgba(168, 85, 247, 0.4); 
+}
+.connection-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 15px; }
+.input-group { flex: 1; min-width: 200px; }
+.input-group label { display: block; margin-bottom: 5px; color: #888; font-size: 0.85rem; }
+input[type="text"], input[type="number"] { 
+    width: 100%; 
+    padding: 10px 12px; 
+    border: 1px solid rgba(100, 100, 200, 0.4); 
+    border-radius: 8px; 
+    background: rgba(10, 10, 30, 0.8); 
+    color: #e0e0e0; 
+    font-size: 0.95rem; 
+}
+.btn { 
+    padding: 10px 20px; 
+    border: none; 
+    border-radius: 8px; 
+    font-size: 0.95rem; 
+    font-weight: 600; 
+    cursor: pointer; 
+    transition: all 0.3s ease; 
+    text-transform: uppercase; 
+    letter-spacing: 0.5px; 
+}
+.btn-connect { background: linear-gradient(135deg, #00d4ff, #0099cc); color: #fff; }
+.btn-connect:hover { transform: translateY(-2px); box-shadow: 0 4px 15px rgba(0, 212, 255, 0.4); }
+.status-indicator { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-left: 10px; }
+.connected { background: #22c55e; box-shadow: 0 0 10px #22c55e; }
+.disconnected { background: #ef4444; }
+
+/* 控制按钮样式 */
+.control-panel {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    max-width: 300px;
+    margin: 0 auto;
+}
+.control-btn {
+    padding: 30px 20px;
+    border: none;
+    border-radius: 12px;
+    font-size: 1.5rem;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: manipulation;
+}
+.control-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+.btn-forward { 
+    background: linear-gradient(135deg, #22c55e, #16a34a); 
+    color: white;
+    grid-column: 2;
+    grid-row: 1;
+}
+.btn-forward:active, .btn-forward.active {
+    background: linear-gradient(135deg, #16a34a, #15803d);
+    transform: scale(0.95);
+    box-shadow: 0 0 20px rgba(34, 197, 94, 0.6);
+}
+.btn-backward { 
+    background: linear-gradient(135deg, #ef4444, #dc2626); 
+    color: white;
+    grid-column: 2;
+    grid-row: 3;
+}
+.btn-backward:active, .btn-backward.active {
+    background: linear-gradient(135deg, #dc2626, #b91c1c);
+    transform: scale(0.95);
+    box-shadow: 0 0 20px rgba(239, 68, 68, 0.6);
+}
+.btn-left { 
+    background: linear-gradient(135deg, #f59e0b, #d97706); 
+    color: white;
+    grid-column: 1;
+    grid-row: 2;
+}
+.btn-left:active, .btn-left.active {
+    background: linear-gradient(135deg, #d97706, #b45309);
+    transform: scale(0.95);
+    box-shadow: 0 0 20px rgba(245, 158, 11, 0.6);
+}
+.btn-right { 
+    background: linear-gradient(135deg, #f59e0b, #d97706); 
+    color: white;
+    grid-column: 3;
+    grid-row: 2;
+}
+.btn-right:active, .btn-right.active {
+    background: linear-gradient(135deg, #d97706, #b45309);
+    transform: scale(0.95);
+    box-shadow: 0 0 20px rgba(245, 158, 11, 0.6);
+}
+.btn-stop-center {
+    background: linear-gradient(135deg, #6b7280, #4b5563);
+    color: white;
+    grid-column: 2;
+    grid-row: 2;
+    font-size: 1rem;
+    padding: 20px;
+}
+.btn-stop-center:active, .btn-stop-center.active {
+    background: linear-gradient(135deg, #4b5563, #374151);
+    transform: scale(0.95);
+}
+
+/* 档位选择 */
+.gear-selector {
+    display: flex;
+    gap: 10px;
+    margin: 15px 0;
+}
+.gear-btn {
+    flex: 1;
+    padding: 12px;
+    border: 2px solid rgba(100, 100, 200, 0.4);
+    background: rgba(100, 100, 200, 0.1);
+    color: #e0e0e0;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    font-size: 0.85rem;
+}
+.gear-btn.active {
+    background: linear-gradient(135deg, #a855f7, #7c3aed);
+    border-color: #a855f7;
+    box-shadow: 0 0 15px rgba(168, 85, 247, 0.5);
+}
+.gear-btn:hover:not(.active) {
+    background: rgba(100, 100, 200, 0.2);
+}
+
+/* 速度设置 */
+.speed-setting {
+    margin: 15px 0;
+    padding: 15px;
+    background: rgba(10, 10, 30, 0.6);
+    border-radius: 10px;
+}
+.speed-label {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 8px;
+    color: #888;
+    font-size: 0.9rem;
+}
+.speed-value {
+    color: #00d4ff;
+    font-weight: bold;
+    font-family: monospace;
+}
+input[type="range"] { 
+    width: 100%; 
+    height: 8px; 
+    border-radius: 4px; 
+    background: linear-gradient(90deg, #22c55e 0%, #f59e0b 50%, #ef4444 100%); 
+    outline: none; 
+    -webkit-appearance: none; 
+}
+input[type="range"]::-webkit-slider-thumb { 
+    -webkit-appearance: none; 
+    width: 20px; 
+    height: 20px; 
+    border-radius: 50%; 
+    background: #00d4ff; 
+    cursor: pointer; 
+    box-shadow: 0 0 10px rgba(0, 212, 255, 0.5); 
+}
+
+/* 紧急停止 */
+.emergency-stop {
+    width: 100%;
+    padding: 20px;
+    margin-top: 15px;
+    background: linear-gradient(135deg, #dc2626, #991b1b);
+    color: white;
+    font-size: 1.3rem;
+    font-weight: bold;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 15px rgba(220, 38, 38, 0.4);
+}
+.emergency-stop:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(220, 38, 38, 0.6);
+}
+.emergency-stop:active {
+    transform: scale(0.98);
+}
+
+/* 状态显示 */
+.info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.info-item { 
+    background: rgba(10, 10, 30, 0.6); 
+    padding: 12px; 
+    border-radius: 8px; 
+    border: 1px solid rgba(100, 100, 200, 0.3); 
+}
+.info-label { font-size: 0.8rem; color: #888; margin-bottom: 4px; }
+.info-value { font-size: 1.2rem; color: #00d4ff; font-weight: 600; font-family: monospace; }
+.info-value.active { color: #22c55e; }
+.info-value.warning { color: #f59e0b; }
+
+/* 日志 */
+.log-container { 
+    background: rgba(10, 10, 30, 0.8); 
+    border-radius: 10px; 
+    padding: 15px; 
+    height: 180px; 
+    overflow-y: auto; 
+    font-family: monospace; 
+    font-size: 0.85rem; 
+    border: 1px solid rgba(100, 100, 200, 0.3); 
+}
+.log-entry { padding: 3px 0; border-bottom: 1px solid rgba(100, 100, 200, 0.1); }
+.log-entry.error { color: #ef4444; }
+.log-entry.success { color: #22c55e; }
+.log-entry.warn { color: #f59e0b; }
+.log-entry.info { color: #00d4ff; }
+
+.full-width { grid-column: 1 / -1; }
+</style>
+</head>
+<body>
+<div class="container">
+    <h1>🚗 AGV 安全测试控制面板</h1>
+    
+    <div class="warning-banner">
+        ⚠️ 安全警告：请确保AGV周围无障碍物，使用非常小的速度进行测试！
+    </div>
+    
+    <div class="dashboard-grid">
+        <!-- 连接面板 -->
+        <div class="panel">
+            <h2>🔗 ROS2 连接</h2>
+            <div class="connection-row">
+                <div class="input-group">
+                    <label>WebSocket URL</label>
+                    <input type="text" id="wsUrl" value="ws://localhost:9091">
+                </div>
+                <button class="btn btn-connect" id="connectBtn" onclick="toggleConnection()">连接</button>
+                <span id="connStatus" class="status-indicator disconnected"></span>
+            </div>
+            <div style="margin-top: 10px; font-size: 0.8rem; color: #666;">
+                提示：连接后会自动发送解锁序列
+            </div>
+        </div>
+        
+        <!-- 状态面板 -->
+        <div class="panel">
+            <h2>📊 车辆状态</h2>
+            <div class="info-grid">
+                <div class="info-item">
+                    <div class="info-label">X轴速度 (前后)</div>
+                    <div class="info-value" id="speedX">0.00 m/s</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Y轴速度 (左右)</div>
+                    <div class="info-value" id="speedY">0.00 m/s</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Z轴角速度</div>
+                    <div class="info-value" id="speedZ">0.00 °/s</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">当前档位</div>
+                    <div class="info-value" id="gearDisplay">4T4D</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">电池电压</div>
+                    <div class="info-value" id="batVoltage">-- V</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">电池电量</div>
+                    <div class="info-value" id="batSoc">-- %</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 控制面板 -->
+        <div class="panel">
+            <h2>🎮 方向控制 (按住移动，松开停止)</h2>
+            
+            <!-- 档位选择 -->
+            <div>
+                <label style="color: #888; font-size: 0.85rem;">选择档位模式：</label>
+                <div class="gear-selector">
+                    <button class="gear-btn active" id="gear4T4D" onclick="setGear(6)">
+                        4T4D模式<br><small>(前进/后退/旋转)</small>
+                    </button>
+                    <button class="gear-btn" id="gearLateral" onclick="setGear(8)">
+                        横移模式<br><small>(前进/后退/平移)</small>
+                    </button>
+                </div>
+            </div>
+            
+            <!-- 速度设置 -->
+            <div class="speed-setting">
+                <div class="speed-label">
+                    <span>设置测试速度 (X轴 - 前后)</span>
+                    <span class="speed-value" id="speedXValue">0.05 m/s</span>
+                </div>
+                <input type="range" id="speedXSlider" min="0.01" max="0.5" step="0.01" value="0.05" oninput="updateSpeedDisplay()">
+            </div>
+            
+            <div class="speed-setting" id="speedYSetting" style="display: none;">
+                <div class="speed-label">
+                    <span>设置测试速度 (Y轴 - 左右平移)</span>
+                    <span class="speed-value" id="speedYValue">0.05 m/s</span>
+                </div>
+                <input type="range" id="speedYSlider" min="0.01" max="0.3" step="0.01" value="0.05" oninput="updateSpeedDisplay()">
+            </div>
+            
+            <div class="speed-setting">
+                <div class="speed-label">
+                    <span>旋转速度 (Z轴 - 仅4T4D模式)</span>
+                    <span class="speed-value" id="speedZValue">10 °/s</span>
+                </div>
+                <input type="range" id="speedZSlider" min="1" max="30" step="1" value="10" oninput="updateSpeedDisplay()">
+            </div>
+            
+            <!-- 方向按钮 -->
+            <div class="control-panel">
+                <button class="control-btn btn-forward" id="btnForward" disabled 
+                    onmousedown="startMove('forward')" onmouseup="stopMove()"
+                    ontouchstart="startMove('forward')" ontouchend="stopMove()">▲</button>
+                
+                <button class="control-btn btn-left" id="btnLeft" disabled 
+                    onmousedown="startMove('left')" onmouseup="stopMove()"
+                    ontouchstart="startMove('left')" ontouchend="stopMove()">◀</button>
+                
+                <button class="control-btn btn-stop-center" id="btnStopCenter" disabled 
+                    onclick="stopMove()">STOP</button>
+                
+                <button class="control-btn btn-right" id="btnRight" disabled 
+                    onmousedown="startMove('right')" onmouseup="stopMove()"
+                    ontouchstart="startMove('right')" ontouchend="stopMove()">▶</button>
+                
+                <button class="control-btn btn-backward" id="btnBackward" disabled 
+                    onmousedown="startMove('backward')" onmouseup="stopMove()"
+                    ontouchstart="startMove('backward')" ontouchend="stopMove()">▼</button>
+            </div>
+            
+            <button class="emergency-stop" onclick="emergencyStop()">🛑 紧急停止</button>
+        </div>
+        
+        <!-- 说明面板 -->
+        <div class="panel">
+            <h2>📖 使用说明</h2>
+            <div style="font-size: 0.9rem; line-height: 1.8; color: #ccc;">
+                <p><strong>4T4D模式 (档位06)：</strong></p>
+                <ul style="margin-left: 20px; margin-bottom: 15px;">
+                    <li>▲ 前进：X轴正方向移动</li>
+                    <li>▼ 后退：X轴负方向移动</li>
+                    <li>◀ 左转：Z轴逆时针旋转</li>
+                    <li>▶ 右转：Z轴顺时针旋转</li>
+                </ul>
+                
+                <p><strong>横移模式 (档位08)：</strong></p>
+                <ul style="margin-left: 20px; margin-bottom: 15px;">
+                    <li>▲ 前进：X轴正方向移动</li>
+                    <li>▼ 后退：X轴负方向移动</li>
+                    <li>◀ 左移：Y轴正方向平移</li>
+                    <li>▶ 右移：Y轴负方向平移</li>
+                </ul>
+                
+                <p><strong>⚠️ 安全提示：</strong></p>
+                <ul style="margin-left: 20px;">
+                    <li>按住按钮移动，松开自动停止</li>
+                    <li>建议先在0.05 m/s速度下测试</li>
+                    <li>确保周围1米内无障碍物</li>
+                    <li>随时准备按紧急停止</li>
+                </ul>
+            </div>
+        </div>
+        
+        <!-- 日志面板 -->
+        <div class="panel full-width">
+            <h2>📝 系统日志</h2>
+            <div class="log-container" id="systemLog"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+// ==================== 全局变量 ====================
+let ros = null;
+let isConnected = false;
+let currentGear = 6;  // 默认4T4D档
+let isMoving = false;
+let currentDirection = null;
+let cmdPublisher = null;
+let ioPublisher = null;
+let chassisSubscriber = null;
+let unlockInterval = null;
+let cmdInterval = null;
+
+// 当前速度值
+let currentSpeedX = 0;
+let currentSpeedY = 0;
+let currentSpeedZ = 0;
+
+// ==================== 初始化 ====================
+function init() {
+    addLog('AGV测试控制面板已加载', 'info');
+    addLog('请确保CAN接口已配置：sudo ./scripts/s4 can auto', 'info');
+    updateSpeedDisplay();
+}
+
+// ==================== 连接管理 ====================
+function toggleConnection() {
+    const url = document.getElementById('wsUrl').value;
+    const btn = document.getElementById('connectBtn');
+    const status = document.getElementById('connStatus');
+    
+    if (isConnected) {
+        disconnect();
+        return;
+    }
+    
+    addLog('正在连接到 ' + url, 'info');
+    
+    ros = new ROSLIB.Ros({ url: url });
+    
+    ros.on('connection', function() {
+        isConnected = true;
+        status.className = 'status-indicator connected';
+        btn.textContent = '断开';
+        addLog('已连接到ROS2', 'success');
+        
+        // 初始化发布者和订阅者
+        initPublishers();
+        
+        // 发送解锁序列
+        sendUnlockSequence();
+        
+        // 启用控制按钮
+        enableControls(true);
+    });
+    
+    ros.on('error', function(error) {
+        addLog('连接错误: ' + error, 'error');
+    });
+    
+    ros.on('close', function() {
+        disconnect();
+    });
+}
+
+function disconnect() {
+    isConnected = false;
+    if (ros) {
+        ros.close();
+        ros = null;
+    }
+    
+    // 清除定时器
+    if (unlockInterval) {
+        clearInterval(unlockInterval);
+        unlockInterval = null;
+    }
+    if (cmdInterval) {
+        clearInterval(cmdInterval);
+        cmdInterval = null;
+    }
+    
+    document.getElementById('connStatus').className = 'status-indicator disconnected';
+    document.getElementById('connectBtn').textContent = '连接';
+    enableControls(false);
+    addLog('已断开连接', 'warn');
+}
+
+function initPublishers() {
+    // 控制命令发布者
+    cmdPublisher = new ROSLIB.Topic({
+        ros: ros,
+        name: '/ctrl_cmd',
+        messageType: 'yhs_can_interfaces/msg/CtrlCmd'
+    });
+    
+    // IO命令发布者
+    ioPublisher = new ROSLIB.Topic({
+        ros: ros,
+        name: '/io_cmd',
+        messageType: 'yhs_can_interfaces/msg/IoCmd'
+    });
+    
+    // 底盘状态订阅者
+    chassisSubscriber = new ROSLIB.Topic({
+        ros: ros,
+        name: '/chassis_info_fb',
+        messageType: 'yhs_can_interfaces/msg/ChassisInfoFb'
+    });
+    
+    chassisSubscriber.subscribe(function(msg) {
+        updateVehicleState(msg);
+    });
+}
+
+// ==================== 解锁序列 ====================
+function sendUnlockSequence() {
+    addLog('发送解锁序列...', 'info');
+    
+    // 按照YUHESEN官方协议，解锁需要特定的下降沿序列：
+    // 0x02 (unlock=1, lamp=0) → 0x02 → 0x00 → 0x00
+    // 间隔20ms，然后持续发送unlock=1保持解锁
+    
+    const sequence = [
+        { unlock: true, lamp: false, desc: '解锁步骤1' },   // Byte0 = 0x02
+        { unlock: true, lamp: false, desc: '解锁步骤2' },   // Byte0 = 0x02
+        { unlock: false, lamp: false, desc: '解锁步骤3' },  // Byte0 = 0x00
+        { unlock: false, lamp: false, desc: '解锁步骤4' }   // Byte0 = 0x00
+    ];
+    
+    let step = 0;
+    
+    function sendStep() {
+        if (step < sequence.length && isConnected) {
+            const cmd = new ROSLIB.Message({
+                io_cmd_unlock: sequence[step].unlock,
+                io_cmd_lamp_ctrl: sequence[step].lamp
+            });
+            
+            ioPublisher.publish(cmd);
+            addLog(sequence[step].desc + ': unlock=' + sequence[step].unlock + ', lamp=' + sequence[step].lamp, 'info');
+            
+            step++;
+            setTimeout(sendStep, 20); // 20ms间隔，符合协议要求
+        } else if (isConnected) {
+            // 解锁序列完成，开始持续发送保持解锁状态
+            addLog('解锁序列完成，开始持续保持解锁状态', 'success');
+            
+            unlockInterval = setInterval(() => {
+                if (isConnected) {
+                    // 持续发送 unlock=1, lamp=1 (0x03) 保持解锁
+                    ioPublisher.publish(new ROSLIB.Message({
+                        io_cmd_unlock: true,
+                        io_cmd_lamp_ctrl: true
+                    }));
+                }
+            }, 100); // 10Hz
+        }
+    }
+    
+    // 开始发送解锁序列
+    sendStep();
+}
+
+// ==================== 档位设置 ====================
+function setGear(gear) {
+    currentGear = gear;
+    
+    // 更新按钮样式
+    document.getElementById('gear4T4D').className = gear === 6 ? 'gear-btn active' : 'gear-btn';
+    document.getElementById('gearLateral').className = gear === 8 ? 'gear-btn active' : 'gear-btn';
+    
+    // 更新显示
+    const gearNames = {6: '4T4D', 8: '横移'};
+    document.getElementById('gearDisplay').textContent = gearNames[gear];
+    
+    // 显示/隐藏Y轴速度设置
+    document.getElementById('speedYSetting').style.display = gear === 8 ? 'block' : 'none';
+    
+    addLog('切换到' + gearNames[gear] + '模式', 'info');
+    
+    // 如果正在移动，立即停止
+    stopMove();
+}
+
+// ==================== 速度显示更新 ====================
+function updateSpeedDisplay() {
+    const speedX = parseFloat(document.getElementById('speedXSlider').value);
+    const speedY = parseFloat(document.getElementById('speedYSlider').value);
+    const speedZ = parseFloat(document.getElementById('speedZSlider').value);
+    
+    document.getElementById('speedXValue').textContent = speedX.toFixed(2) + ' m/s';
+    document.getElementById('speedYValue').textContent = speedY.toFixed(2) + ' m/s';
+    document.getElementById('speedZValue').textContent = speedZ.toFixed(0) + ' °/s';
+}
+
+// ==================== 移动控制 ====================
+function startMove(direction) {
+    if (!isConnected || isMoving) return;
+    
+    isMoving = true;
+    currentDirection = direction;
+    
+    // 获取设置的速度
+    const maxSpeedX = parseFloat(document.getElementById('speedXSlider').value);
+    const maxSpeedY = parseFloat(document.getElementById('speedYSlider').value);
+    const maxSpeedZ = parseFloat(document.getElementById('speedZSlider').value);
+    
+    // 根据方向和档位设置速度
+    // 注意：ROS接口使用 m/s 和 rad/s
+    // Z轴角速度需要转换为 rad/s (°/s * π/180)
+    const zRad = maxSpeedZ * Math.PI / 180;
+    
+    switch (direction) {
+        case 'forward':
+            currentSpeedX = maxSpeedX;
+            currentSpeedY = 0;
+            currentSpeedZ = 0;
+            break;
+        case 'backward':
+            currentSpeedX = -maxSpeedX;
+            currentSpeedY = 0;
+            currentSpeedZ = 0;
+            break;
+        case 'left':
+            if (currentGear === 6) {
+                // 4T4D模式：左旋转
+                currentSpeedX = 0;
+                currentSpeedY = 0;
+                currentSpeedZ = zRad;  // 逆时针为正
+            } else {
+                // 横移模式：左平移
+                currentSpeedX = 0;
+                currentSpeedY = maxSpeedY;  // 左为正
+                currentSpeedZ = 0;
+            }
+            break;
+        case 'right':
+            if (currentGear === 6) {
+                // 4T4D模式：右旋转
+                currentSpeedX = 0;
+                currentSpeedY = 0;
+                currentSpeedZ = -zRad;  // 顺时针为负
+            } else {
+                // 横移模式：右平移
+                currentSpeedX = 0;
+                currentSpeedY = -maxSpeedY;  // 右为负
+                currentSpeedZ = 0;
+            }
+            break;
+    }
+    
+    // 更新按钮状态
+    updateButtonState(direction, true);
+    
+    // 立即发送一次命令
+    sendCommand();
+    
+    // 按照CAN协议要求，每10ms循环发送
+    cmdInterval = setInterval(sendCommand, 10);
+    
+    addLog(direction + ' 开始移动', 'info');
+}
+
+function stopMove() {
+    if (!isMoving) return;
+    
+    isMoving = false;
+    currentDirection = null;
+    currentSpeedX = 0;
+    currentSpeedY = 0;
+    currentSpeedZ = 0;
+    
+    // 清除定时器
+    if (cmdInterval) {
+        clearInterval(cmdInterval);
+        cmdInterval = null;
+    }
+    
+    // 更新按钮状态
+    updateButtonState(null, false);
+    
+    // 发送停止命令
+    sendCommand();
+    
+    addLog('停止移动', 'info');
+}
+
+function sendCommand() {
+    if (!isConnected || !cmdPublisher) return;
+    
+    const cmd = new ROSLIB.Message({
+        ctrl_cmd_gear: currentGear,
+        ctrl_cmd_x_linear: currentSpeedX,
+        ctrl_cmd_y_linear: currentSpeedY,
+        ctrl_cmd_z_angular: currentSpeedZ
+    });
+    
+    cmdPublisher.publish(cmd);
+}
+
+function updateButtonState(activeDirection, isPressed) {
+    const buttons = {
+        'forward': 'btnForward',
+        'backward': 'btnBackward',
+        'left': 'btnLeft',
+        'right': 'btnRight'
+    };
+    
+    // 重置所有按钮
+    for (const [dir, id] of Object.entries(buttons)) {
+        const btn = document.getElementById(id);
+        if (dir === activeDirection && isPressed) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    }
+}
+
+// ==================== 紧急停止 ====================
+function emergencyStop() {
+    stopMove();
+    
+    if (isConnected && cmdPublisher) {
+        // 发送停止命令
+        const cmd = new ROSLIB.Message({
+            ctrl_cmd_gear: 0,  // disable档
+            ctrl_cmd_x_linear: 0,
+            ctrl_cmd_y_linear: 0,
+            ctrl_cmd_z_angular: 0
+        });
+        cmdPublisher.publish(cmd);
+    }
+    
+    addLog('🛑 紧急停止已激活！', 'error');
+    alert('紧急停止已激活！请检查安全后重新连接。');
+}
+
+// ==================== UI更新 ====================
+function enableControls(enabled) {
+    const buttons = ['btnForward', 'btnBackward', 'btnLeft', 'btnRight', 'btnStopCenter'];
+    buttons.forEach(id => {
+        document.getElementById(id).disabled = !enabled;
+    });
+}
+
+function updateVehicleState(msg) {
+    if (msg.ctrl_fb) {
+        document.getElementById('speedX').textContent = msg.ctrl_fb.ctrl_fb_x_linear.toFixed(3) + ' m/s';
+        document.getElementById('speedY').textContent = msg.ctrl_fb.ctrl_fb_y_linear.toFixed(3) + ' m/s';
+        
+        // 将rad/s转换为°/s显示
+        const zDeg = msg.ctrl_fb.ctrl_fb_z_angular * 180 / Math.PI;
+        document.getElementById('speedZ').textContent = zDeg.toFixed(1) + ' °/s';
+    }
+    
+    if (msg.bms_fb) {
+        document.getElementById('batVoltage').textContent = msg.bms_fb.bms_fb_voltage.toFixed(1) + ' V';
+    }
+    
+    if (msg.bms_flag_fb) {
+        document.getElementById('batSoc').textContent = msg.bms_flag_fb.bms_flag_fb_soc + ' %';
+    }
+}
+
+function addLog(message, type) {
+    const log = document.getElementById('systemLog');
+    const entry = document.createElement('div');
+    entry.className = 'log-entry ' + type;
+    const time = new Date().toLocaleTimeString();
+    entry.textContent = '[' + time + '] ' + message;
+    log.appendChild(entry);
+    log.scrollTop = log.scrollHeight;
+}
+
+// ==================== 键盘控制 ====================
+document.addEventListener('keydown', function(e) {
+    if (!isConnected) return;
+    
+    // 防止重复触发
+    if (e.repeat) return;
+    
+    switch(e.key) {
+        case 'w':
+        case 'W':
+        case 'ArrowUp':
+            startMove('forward');
+            e.preventDefault();
+            break;
+        case 's':
+        case 'S':
+        case 'ArrowDown':
+            startMove('backward');
+            e.preventDefault();
+            break;
+        case 'a':
+        case 'A':
+        case 'ArrowLeft':
+            startMove('left');
+            e.preventDefault();
+            break;
+        case 'd':
+        case 'D':
+        case 'ArrowRight':
+            startMove('right');
+            e.preventDefault();
+            break;
+        case ' ':
+        case 'Escape':
+            stopMove();
+            e.preventDefault();
+            break;
+    }
+});
+
+document.addEventListener('keyup', function(e) {
+    if (!isConnected) return;
+    
+    switch(e.key) {
+        case 'w':
+        case 'W':
+        case 'ArrowUp':
+        case 's':
+        case 'S':
+        case 'ArrowDown':
+        case 'a':
+        case 'A':
+        case 'ArrowLeft':
+        case 'd':
+        case 'D':
+        case 'ArrowRight':
+            stopMove();
+            break;
+    }
+});
+
+// ==================== 页面加载 ====================
+window.onload = init;
+</script>
+</body>
+</html>
