@@ -1170,3 +1170,214 @@ bash scripts/run.sh
 
 *最后更新: 2026-03-24*
 *下次计划: 测试多 CAN 设备同时工作*
+
+---
+
+## 2026-03-25: AGV 控制调通 + 代码重构 + GitHub 同步
+
+### ✅ 重大里程碑：AGV 底盘控制调通
+
+经过详细调试和协议分析，**FW-Max AGV 底盘控制已完全调通**！
+
+#### 问题根源
+
+官方 `yhs_can_control` 驱动存在多个关键 Bug：
+
+1. **单位转换错误**：ROS 消息使用 rad/s，但 CAN 协议使用 °/s（0.01°/s/bit），缺少转换
+2. **符号扩展问题**：处理负数速度时，位操作因编译器不同产生不一致结果
+3. **字节布局错误**：`ctrl_cmd` 的字节打包逻辑与官方 CAN 协议不符
+4. **解锁逻辑不清晰**：`io_cmd_unlock` 的安全解锁机制缺少注释
+
+#### 修复内容
+
+**1. CAN 协议编码修复** (`yhs_can_control_node.cpp`)
+```cpp
+// 修正单位转换：rad/s → °/s
+const short z_raw = static_cast<short>(
+    msg.ctrl_cmd_z_angular * 180.0 / 3.14159265 * 100
+);
+
+// 修正符号扩展处理
+short x_raw_copy = x_raw;
+unsigned short x_raw_u = *reinterpret_cast<unsigned short*>(&x_raw_copy);
+unsigned char x_high_nibble = (x_raw_u >> 12) & 0x0F;
+```
+
+**2. 添加详细注释**
+- 完整的字节布局说明
+- CAN 协议参数说明
+- 调试日志增强
+
+**3. 新增测试工具**
+- `test_vehicle_control.py` - 车辆控制测试脚本
+- `scripts/start_agv_test.sh` - AGV 一键测试
+- Web Dashboard - 实时监控页面
+
+#### 验证结果
+
+```bash
+# 测试直线运动
+ros2 topic pub /ctrl_cmd yhs_can_interfaces/msg/CtrlCmd \
+  '{ctrl_cmd_x_linear: 0.5, ctrl_cmd_z_angular: 0.0, ctrl_cmd_gear: 6}'
+
+# 测试旋转
+ros2 topic pub /ctrl_cmd yhs_can_interfaces/msg/CtrlCmd \
+  '{ctrl_cmd_x_linear: 0.0, ctrl_cmd_z_angular: 0.5, ctrl_cmd_gear: 6}'
+```
+
+✅ **底盘按预期运动**：前进、后退、旋转均正常
+
+---
+
+### 🔧 项目结构重构
+
+#### 1. 统一 CLI 工具 (`scripts/s4`)
+
+创建类似 `tauri` 的统一直令行工具，替代分散的脚本：
+
+```bash
+./scripts/s4 check           # 检查环境和依赖
+./scripts/s4 dev             # 启动开发环境（硬件模式）
+./scripts/s4 dev sim         # 仿真模式
+./scripts/s4 dev teleop      # 硬件 + 键盘遥控
+./scripts/s4 build           # 编译工作空间
+./scripts/s4 stop            # 停止所有节点
+./scripts/s4 status          # 查看系统状态
+sudo ./scripts/s4 can auto   # 自动配置 CAN 设备
+```
+
+**优势**：
+- 单一入口，命令记忆简单
+- 自动检测环境和依赖
+- 集成所有常用操作
+
+#### 2. 子模块转为普通目录
+
+**原因**：官方驱动有 Bug，需要本地修改
+
+**操作**：
+```bash
+# 移除子模块配置
+git rm --cached src/YUHESEN-FW-MAX
+rm -rf .git/modules/src/YUHESEN-FW-MAX
+cd src/YUHESEN-FW-MAX && rm -rf .git
+
+# 更新 .gitignore
+git add src/YUHESEN-FW-MAX/
+```
+
+**结果**：
+- AGV 驱动代码现在直接在仓库中维护
+- 可以自由修改和修复 Bug
+- 排除了大文件（`.apk`, `.doc`）
+
+---
+
+### 🌐 新增 Web Dashboard
+
+创建独立的 Web 监控页面：
+
+```bash
+# 启动 Web Dashboard
+bash web_dashboard/start_web_dashboard.sh
+
+# 访问地址
+http://<jetson-ip>:8080
+```
+
+**功能**：
+- 🎯 实时运动状态（速度、转向角、电压）
+- 📡 ROS2 话题列表
+- 📝 系统日志
+- 🎮 远程控制按钮
+
+---
+
+### 📤 GitHub 同步
+
+**提交记录**：
+
+1. **feat: AGV control working** (`6646f38`)
+   - 统一 s4 CLI 工具
+   - AGV 测试脚本和车辆控制测试
+   - Web Dashboard 实时监控
+   - AGENTS.md AI 开发文档
+   - 重构启动文件，支持硬件控制
+
+2. **refactor: convert YUHESEN-FW-MAX from submodule** (`b8c9c08`)
+   - 移除子模块配置
+   - AGV 驱动代码纳入主仓库
+   - 更新 .gitignore 排除大文件
+
+**仓库地址**：https://github.com/licher255/blueberry_s4
+
+---
+
+### 📝 计划向官方提交 Issue
+
+准备向 YUHESEN 官方提交 Issue，报告驱动中的 Bug：
+
+**目标仓库**：https://github.com/YUHESEN-Robot/FW-max-ros2/issues
+
+**Issue 内容**：
+- 问题描述：CAN 协议编码错误导致车辆无法响应控制
+- 具体问题：单位转换、符号扩展、字节布局
+- 修复方案：完整的代码修改说明
+- 参考实现：https://github.com/licher255/blueberry_s4
+
+---
+
+### 📊 当前项目状态
+
+| 组件 | 状态 | 说明 |
+|------|------|------|
+| AGV 底盘控制 | ✅ 完成 | CAN 通信正常，运动控制调通 |
+| CAN 设备管理 | ✅ 完成 | 自动检测、配置、服务化 |
+| Web Dashboard | ✅ 完成 | 实时监控，远程可视化 |
+| s4 CLI 工具 | ✅ 完成 | 统一命令行入口 |
+| 代码版本控制 | ✅ 完成 | GitHub 同步完成 |
+| WHJ 升降机构 | ⏳ 待开发 | CAN-FD 通信 |
+| Kinco 伺服 | ⏳ 待开发 | CANopen 协议 |
+| D405 相机阵列 | ⏳ 待开发 | 7× USB 3.0 |
+| Livox 激光雷达 | ⏳ 待开发 | 以太网接口 |
+
+---
+
+### 🎯 下一步计划
+
+1. **向官方提交 Issue** - 报告 AGV 驱动 Bug
+2. **集成 WHJ 升降机构** - CAN-FD 通信开发
+3. **集成 Kinco 伺服** - CANopen 协议开发
+4. **配置相机阵列** - 7× D405 同步采集
+5. **配置激光雷达** - Livox Mid-360 点云
+
+---
+
+### 📁 新增/修改文件
+
+```
+新增:
+├── AGENTS.md                           # AI 开发文档
+├── scripts/s4                          # 统一 CLI 工具 ⭐
+├── scripts/check_env.sh
+├── scripts/start_agv_test.sh
+├── test_vehicle_control.py             # 车辆控制测试
+└── web_dashboard/                      # Web 监控页面
+    ├── index.html
+    ├── agv_test_control.html
+    ├── app.js
+    ├── style.css
+    └── start_web_dashboard.sh
+
+修改:
+├── .gitignore                          # 移除 YUHESEN-FW-MAX 忽略
+├── README.md                           # 更新使用说明
+└── src/bringup/launch/robot.launch.py  # 优化参数
+
+子模块变更:
+└── src/YUHESEN-FW-MAX/                 # 从子模块转为普通目录
+    └── yhs_can_control/src/yhs_can_control_node.cpp  # 关键修复
+```
+
+*记录时间: 2026-03-25*  
+*里程碑: AGV 控制调通 ✅*
