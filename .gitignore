@@ -30,5 +30,6 @@ Thumbs.db
 # clash
 clash/
 clash-for-linux-install/
-src/YUHESEN-FW-MAX
-src/YUHESEN-FW-MAX.bak
+# YUHESEN-FW-MAX is now part of the main repo (was submodule)
+src/YUHESEN-FW-MAX/*.apk*
+src/YUHESEN-FW-MAX/*.doc
