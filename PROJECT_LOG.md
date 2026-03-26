@@ -162,10 +162,6 @@ bash ~/s4_ws/stop_s4.sh
 - **IP**: `192.168.1.100` (待确认)
 - **端口**: 22 (默认)
 
-### Foxglove 可视化
-- **Jetson 端**: `ros2 launch foxglove_bridge foxglove_bridge_launch.xml`
-- **浏览器**: https://studio.foxglove.dev
-- **连接地址**: `ws://192.168.1.100:8765`
 
 ---
 
@@ -311,38 +307,7 @@ ros2 topic pub /ctrl_cmd yhs_can_interfaces/msg/CtrlCmd \
 
 ---
 
-## 2025-03-23: Foxglove Studio 远程可视化配置
 
-### 安装组件
-- ✅ rosbridge_suite (WebSocket 服务器)
-
-### 连接信息
-- **Jetson IP**: 192.168.1.100
-- **WebSocket Port**: 9090
-- **连接 URL**: ws://192.168.1.100:9090
-
-### 使用方法
-1. 在 Jetson 上启动 Foxglove 环境:
-   bash ~/s4_ws/launch_foxglove.sh
-
-2. 在浏览器打开 Foxglove Studio:
-   https://studio.foxglove.dev
-
-3. 点击 'Open Connection' -> 'Rosbridge (WebSocket)'
-
-4. 输入 WebSocket URL: ws://192.168.1.100:9090
-
-5. 导入布局配置 (可选):
-   将 ~/s4_ws/foxglove_layout.json 导入 Foxglove
-
-### 可视化内容
-- 底盘速度图表 (线性速度/角速度)
-- 电池电压仪表盘
-- 电池 SOC 仪表盘
-- 原始数据查看器
-- 急停状态显示
-
----
 
 ## 2025-03-23: 本地化可视化方案（无需 Google 登录）
 
@@ -352,25 +317,6 @@ ros2 topic pub /ctrl_cmd yhs_can_interfaces/msg/CtrlCmd \
 
 ### 解决方案
 
-#### 方案 1: Foxglove Desktop（功能最全）
-下载桌面版应用：
-```bash
-# 在本地电脑上下载
-https://github.com/foxglove/studio/releases
-
-# 安装后选择 "Open Connection" -> "Rosbridge (WebSocket)"
-# 输入: ws://192.168.1.100:9090
-```
-
-#### 方案 2: RViz2（ROS2 原生）
-```bash
-bash ~/s4_ws/launch_rviz.sh
-```
-
-#### 方案 3: RQT（轻量级）
-```bash
-bash ~/s4_ws/launch_rqt.sh
-```
 
 #### 方案 4: Web Dashboard（推荐，无需安装）⭐
 ```bash
@@ -1381,3 +1327,224 @@ http://<jetson-ip>:8080
 
 *记录时间: 2026-03-25*  
 *里程碑: AGV 控制调通 ✅*
+
+
+---
+
+## 2026-03-25 Update: ZLG USB-CANFD 驱动安装与 WHJ 驱动框架
+
+### 背景
+今天的主要任务是打通 ZLG USB-CANFD-100U-mini 设备，为后续 WHJ (RealMan 升降机构) 的 CAN-FD 通信做准备。
+
+### 1. ZLG USB-CANFD 驱动安装 ✅
+
+#### 识别设备
+```bash
+$ lsusb
+Bus 001 Device 005: ID 3068:0009 ZLG USBCANFD-100U-mini
+```
+
+#### 问题
+- Jetson 内核没有预装 ZLG 驱动
+- 需要手动编译安装 SocketCAN 版本驱动
+
+#### 解决方案
+
+**下载驱动源码** (用户从官网下载):
+```
+drivers/usbcanfd200_400u_2.10/
+├── usbcanfd.c          # 驱动源码
+├── usbcanfd.h          # 头文件
+├── Makefile            # 编译脚本
+└── readme.txt          # 官方文档
+```
+
+**编译安装**:
+```bash
+cd drivers/usbcanfd200_400u_2.10
+make clean
+make module
+sudo insmod usbcanfd.ko
+```
+
+**验证安装**:
+```bash
+$ lsmod | grep usbcanfd
+usbcanfd               40960  0
+can_dev                36864  3 mttcan,usbcanfd,pcan
+
+$ ip link show
+3: can3: <NOARP> mtu 16 qdisc noop state DOWN mode DEFAULT group default qlen 10
+4: can4: <NOARP> mtu 16 qdisc noop state DOWN mode DEFAULT qlen 10
+```
+
+**配置 CAN-FD**:
+```bash
+# 启用 can3 接口，配置 CAN-FD 1M/5M
+sudo ip link set can3 up type can fd on bitrate 1000000 dbitrate 5000000
+
+# 验证
+ip -details link show can3
+# can3: <UP> mtu 72 qdisc fq_codel state UP...
+#   can state ERROR-ACTIVE
+#   usbcanfd: tseg1 1..256 tseg2 1..128...
+```
+
+### 2. 创建 RealMan WHJ 驱动包 ✅
+
+#### 目录结构
+```
+src/RealMan-WHJ/
+├── README.md                           # 驱动文档
+├── whj_can_interfaces/                 # ROS2 消息定义
+│   ├── msg/
+│   │   ├── PositionCmd.msg            # 位置控制命令
+│   │   ├── VelocityCmd.msg            # 速度控制命令
+│   │   ├── PositionFb.msg             # 位置反馈
+│   │   ├── StatusFb.msg               # 状态反馈
+│   │   └── StateFb.msg                # 完整状态
+│   ├── CMakeLists.txt
+│   └── package.xml
+└── whj_can_control/                    # 控制节点
+    ├── include/whj_can_control/
+    │   └── whj_can_control_node.hpp   # 头文件
+    ├── src/
+    │   └── whj_can_control_node.cpp   # CAN-FD节点实现
+    ├── scripts/
+    │   └── test_whj_can.py            # Python测试脚本
+    ├── launch/
+    │   └── whj_can_control.launch.py  # 启动文件
+    ├── params/
+    │   └── whj_config.yaml            # 参数配置
+    ├── CMakeLists.txt
+    └── package.xml
+```
+
+#### 消息定义
+| 消息类型 | 用途 | 关键字段 |
+|---------|------|---------|
+| PositionCmd | 位置控制 | target_position, target_speed, control_mode |
+| VelocityCmd | 速度控制 | target_velocity, direction |
+| PositionFb | 位置反馈 | current_position, target_position, current_speed |
+| StatusFb | 状态反馈 | error_code, work_mode, is_moving, is_homed |
+| StateFb | 完整状态 | header + PositionFb + StatusFb |
+
+#### 节点功能
+- **CAN-FD 通信**: 支持标准CAN和CAN-FD模式
+- **双向通信**: 发送控制命令 + 接收状态反馈
+- **ROS2 集成**: 发布/订阅 ROS2 话题
+- **参数配置**: CAN接口名、波特率、设备ID等
+
+### 3. 脚本和工具更新 ✅
+
+#### 新增脚本
+| 脚本 | 功能 |
+|------|------|
+| `scripts/install_zlg_driver.sh` | ZLG 驱动安装 |
+| `scripts/setup_zlg_canfd.sh` | CAN-FD 快速配置 |
+| `scripts/test_whj.sh` | WHJ 设备测试 |
+| `scripts/check_zlg.sh` | ZLG 设备状态检查 |
+
+#### 更新 s4 CLI
+- 新增 `usbcanfd` 驱动类型自动识别
+- 自动配置 CAN-FD 参数 (1M/5M)
+- 支持 can3/can4 接口检测
+
+#### 更新 bringup launch
+```python
+# src/bringup/launch/robot.launch.py
+whj_node = Node(
+    package='whj_can_control',
+    executable='whj_can_control_node',
+    parameters=[{
+        'can_name': 'can3',
+        'canfd_enabled': True,
+    }],
+    condition=IfCondition(use_whj),
+)
+```
+
+### 4. 文档创建 ✅
+
+| 文档 | 位置 | 内容 |
+|------|------|------|
+| ZLG CANFD 安装指南 | `docs/ZLG_CANFD_SETUP.md` | 驱动安装、配置、故障排除 |
+| RealMan-WHJ README | `src/RealMan-WHJ/README.md` | WHJ 驱动使用说明 |
+| AGENTS.md 更新 | `AGENTS.md` | 项目结构、构建说明 |
+
+### 5. 当前硬件状态
+
+| 设备 | 状态 | 接口 | 备注 |
+|------|------|------|------|
+| AGV (YUHESEN FW-Max) | ✅ 正常 | can2 | PEAK USB-CAN |
+| WHJ (RealMan) | ⏳ 待连接 | can3 | ZLG USB-CANFD |
+| Kinco 伺服 | ⏳ 未连接 | can3/can4 | 可与 WHJ 共用 |
+| D405 相机 ×7 | ⏳ 未连接 | USB | - |
+| Livox Mid-360 | ⏳ 未连接 | Ethernet | - |
+
+### 6. 待办事项
+
+**WHJ 协议开发** (用户回来后进行):
+- [ ] 获取 WHJ 实际 CAN-FD 协议文档
+- [ ] 更新 `whj_can_control_node.cpp` 中的 CAN ID
+- [ ] 实现协议编解码
+- [ ] 测试位置/速度控制
+- [ ] 添加安全保护机制
+
+### 7. 快速命令
+
+```bash
+# ZLG CAN-FD 配置
+sudo ./scripts/setup_zlg_canfd.sh can3
+
+# 测试 WHJ 通信
+./scripts/test_whj.sh can3
+
+# 启动 WHJ ROS2 驱动
+cd ~/Blueberry_s4
+source install/setup.bash
+ros2 launch whj_can_control whj_can_control.launch.py can_interface:=can3
+
+# 一键配置所有 CAN
+sudo ./scripts/s4 can auto
+
+# 系统状态检查
+./scripts/s4 check
+```
+
+### 8. 文件清单
+
+```
+新增文件:
+├── drivers/usbcanfd200_400u_2.10/           # ZLG 驱动源码
+│   ├── usbcanfd.c, usbcanfd.h
+│   ├── usbcanfd.ko                          # 编译后的模块
+│   ├── Makefile, readme.txt
+├── drivers/zlgcan/                          # 备用桥接程序框架
+│   ├── src/zlgcan_bridge.cpp
+│   └── Makefile
+├── docs/ZLG_CANFD_SETUP.md                  # ZLG 安装文档
+├── src/RealMan-WHJ/                         # WHJ 驱动包
+│   ├── whj_can_interfaces/
+│   └── whj_can_control/
+├── scripts/
+│   ├── install_zlg_driver.sh                # ZLG 驱动安装
+│   ├── setup_zlg_canfd.sh                   # CAN-FD 配置
+│   ├── test_whj.sh                          # WHJ 测试
+│   └── check_zlg.sh                         # 状态检查
+├── AGENTS.md                                # 已更新
+├── README.md                                # 已更新
+└── src/bringup/launch/robot.launch.py       # 已更新
+
+编译生成的文件:
+└── build/install/log                        # colcon 编译输出
+```
+
+*记录时间: 2026-03-25*  
+*状态: ZLG CAN-FD 驱动已打通 ✅，WHJ 协议待开发 ⏳*
+
+---
+
+*最后更新: 2026-03-25*  
+*下次计划: 根据 Python 协议代码实现 WHJ CAN-FD 通信*
+

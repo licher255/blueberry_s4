@@ -1,0 +1,68 @@
+# Blueberry S4 - CAN 设备配置
+# 按驱动类型定义，接口名在运行时动态检测
+
+# CAN 设备定义（按驱动类型）
+can_devices:
+  # PEAK USB-CAN -> AGV (YUHESEN FW-Max)
+  pcan:
+    device_type: "peak"
+    description: "AGV YUHESEN FW-Max"
+    bitrate: 500000
+    mode: "can"  # 标准 CAN
+    auto_start: true
+    
+  # ZLG USB-CANFD -> WHJ (RealMan 升降机构)
+  usbcanfd:
+    device_type: "zlg"
+    description: "WHJ RealMan 升降机构"
+    bitrate: 1000000
+    dbitrate: 5000000
+    mode: "canfd"  # CAN-FD 模式
+    auto_start: true
+    # 硬件配置
+    hardware:
+      terminal_resistor: true  # 启用内置120Ω终端电阻 (重要！)
+    
+  # Kinco 伺服 (可与 WHJ 共用 usbcanfd 或使用独立接口)
+  # 如需要独立接口，取消下面注释
+  # zlg2:
+  #   device_type: "zlg"
+  #   driver: "usbcanfd"
+  #   description: "Kinco Servo"
+  #   bitrate: 1000000
+  #   dbitrate: 5000000
+  #   mode: "canfd"
+  #   auto_start: true
+
+# 驱动加载顺序
+driver_load_order:
+  - name: "usbcanfd"
+    module: "usbcanfd"
+    path: "drivers/usbcanfd200_400u_2.10/usbcanfd.ko"
+    wait_time: 3
+  - name: "pcan"
+    module: "pcan"
+    wait_time: 2
+
+# 自检配置
+self_check:
+  enabled: true
+  max_retries: 3
+
+# 上层设备状态检查
+devices:
+  agv:
+    name: "YUHESEN FW-Max"
+    driver: "pcan"  # 绑定到驱动类型，不是接口名
+    can_id: "0x18C4D1EF"
+    required: true
+    
+  whj:
+    name: "RealMan WHJ"
+    driver: "usbcanfd"
+    required: false
+    
+  kinco:
+    name: "Kinco Servo"
+    driver: "usbcanfd"
+    required: false

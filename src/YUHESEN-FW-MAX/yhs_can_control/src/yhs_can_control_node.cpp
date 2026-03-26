@@ -27,11 +27,33 @@ namespace yhs
     chassis_info_fb_publisher_ = node_->create_publisher<yhs_can_interfaces::msg::ChassisInfoFb>("chassis_info_fb", 1);
 
     odom_pub_ = node_->create_publisher<nav_msgs::msg::Odometry>("odom", 1);
+    
+    // Create timer to maintain unlock state (50ms = 20Hz)
+    io_maintain_timer_ = node_->create_wall_timer(
+        std::chrono::milliseconds(50),
+        std::bind(&CanControl::io_maintain_callback, this));
+    
+    // Create timer to maintain control commands (10ms = 100Hz, YUHESEN protocol)
+    ctrl_maintain_timer_ = node_->create_wall_timer(
+        std::chrono::milliseconds(10),
+        std::bind(&CanControl::ctrl_maintain_callback, this));
   }
 
   void CanControl::io_cmd_callback(const yhs_can_interfaces::msg::IoCmd::SharedPtr io_cmd_msg)
   {
-    yhs_can_interfaces::msg::IoCmd msg = *io_cmd_msg;
+    // Store the IO command state
+    current_io_cmd_ = *io_cmd_msg;
+    io_cmd_received_ = true;
+    
+    // Send immediately
+    io_maintain_callback();
+  }
+  
+  void CanControl::io_maintain_callback()
+  {
+    if (!io_cmd_received_) return;
+    
+    yhs_can_interfaces::msg::IoCmd msg = current_io_cmd_;
     static unsigned char count = 0;
 
     unsigned char sendDataTemp[8] = {0};
@@ -96,21 +118,23 @@ namespace yhs
 
   void CanControl::ctrl_cmd_callback(const yhs_can_interfaces::msg::CtrlCmd::SharedPtr ctrl_cmd_msg)
   {
-    yhs_can_interfaces::msg::CtrlCmd msg = *ctrl_cmd_msg;
+    // Store the control command state
+    current_ctrl_cmd_ = *ctrl_cmd_msg;
+    ctrl_cmd_received_ = true;
+    
+    // Send immediately for responsiveness
+    ctrl_maintain_callback();
+  }
+  
+  void CanControl::ctrl_maintain_callback()
+  {
+    if (!ctrl_cmd_received_) return;
+    
+    yhs_can_interfaces::msg::CtrlCmd msg = current_ctrl_cmd_;
     
     // YUHESEN FW-Max 官方CAN协议
     // X轴线速度：0.001m/s/bit，16位有符号数（实际使用12位，需要符号扩展）
     // Z轴角速度：0.01°/s/bit，16位有符号数
-    // 
-    // 字节布局（根据反馈解码反推）：
-    // Byte0: bit0-3=gear, bit4-7=x[3:0]
-    // Byte1: x[11:4]
-    // Byte2: bit0-3=x[15:12](符号扩展), bit4-7=z[3:0]
-    // Byte3: z[11:4]
-    // Byte4: bit0-3=z[15:12], bit4-7=y[3:0]
-    // Byte5: y[11:4]
-    // Byte6: bit0-3=y[15:12], bit4-7=frame counter
-    // Byte7: CRC
     
     // 转换速度值为原始数据
     // 注意：ROS消息中Z轴是rad/s，需要转换为°/s (×180/π)
@@ -129,9 +153,7 @@ namespace yhs
     sendDataTemp[1] = (x_raw >> 4) & 0xFF;
     
     // Byte 2: bit0-3=x[15:12], bit4-7=z[3:0]
-    // 对于16位有符号数，高4位是符号扩展
-    // 使用unsigned short来正确提取高4位，避免编译器相关的移位行为
-    short x_raw_copy = x_raw;  // 移除const
+    short x_raw_copy = x_raw;
     unsigned short x_raw_u = *reinterpret_cast<unsigned short*>(&x_raw_copy);
     unsigned char x_high_nibble = (x_raw_u >> 12) & 0x0F;
     sendDataTemp[2] = x_high_nibble | ((z_raw & 0x0F) << 4);
@@ -140,9 +162,8 @@ namespace yhs
     sendDataTemp[3] = (z_raw >> 4) & 0xFF;
     
     // Byte 4: bit0-3=z[15:12], bit4-7=y[3:0]
-    // 同样使用unsigned short来正确提取高4位
-    short z_raw_copy = z_raw;  // 移除const
-    short y_raw_copy = y_raw;  // 移除const
+    short z_raw_copy = z_raw;
+    short y_raw_copy = y_raw;
     unsigned short z_raw_u = *reinterpret_cast<unsigned short*>(&z_raw_copy);
     unsigned short y_raw_u = *reinterpret_cast<unsigned short*>(&y_raw_copy);
     unsigned char z_high_nibble = (z_raw_u >> 12) & 0x0F;
@@ -152,7 +173,7 @@ namespace yhs
     sendDataTemp[5] = (y_raw >> 4) & 0xFF;
     
     // Byte 6: bit0-3=y[15:12], bit4-7=frame counter
-    unsigned char y_high_nibble = (y_raw_u >> 12) & 0x0F;  // y_raw_u 已在上面定义
+    unsigned char y_high_nibble = (y_raw_u >> 12) & 0x0F;
     sendDataTemp[6] = y_high_nibble | (count << 4);
 
     count++;
@@ -164,15 +185,17 @@ namespace yhs
                       ^ sendDataTemp[4] ^ sendDataTemp[5] ^ sendDataTemp[6];
 
     can_frame send_frame;
-    send_frame.can_id = 0x18C4D1D0 | CAN_EFF_FLAG;  // Extended frame format
+    send_frame.can_id = 0x18C4D1D0 | CAN_EFF_FLAG;
     send_frame.can_dlc = 8;
     memcpy(send_frame.data, sendDataTemp, 8);
 
-    // Debug: Print control command details
-    RCLCPP_INFO(rclcpp::get_logger("yhs_can_control_node"), 
-                "CTRL_CMD: gear=%d, x=%.3f m/s (0x%04X), z=%.3f (0x%04X)",
-                gear, msg.ctrl_cmd_x_linear, (unsigned short)x_raw, 
-                msg.ctrl_cmd_z_angular, (unsigned short)z_raw);
+    // Debug: Print control command details (throttle to avoid log spam)
+    static int debug_counter = 0;
+    if (debug_counter++ % 50 == 0) {
+      RCLCPP_INFO(rclcpp::get_logger("yhs_can_control_node"), 
+                  "CTRL_CMD: gear=%d, x=%.3f, y=%.3f, z=%.3f",
+                  gear, msg.ctrl_cmd_x_linear, msg.ctrl_cmd_y_linear, msg.ctrl_cmd_z_angular);
+    }
     RCLCPP_INFO(rclcpp::get_logger("yhs_can_control_node"), 
                 "CAN TX: ID=0x%08X, Data=[%02X %02X %02X %02X %02X %02X %02X %02X]",
                 send_frame.can_id, sendDataTemp[0], sendDataTemp[1], sendDataTemp[2], sendDataTemp[3],

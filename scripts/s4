@@ -1,33 +1,23 @@
 #!/bin/bash
-# Blueberry S4 - 主控脚本 (类似 tauri cli)
-# Usage: ./s4 [check|dev|build|stop|status|can]
-#
-# 命令:
-#   check    检查项目环境、依赖和配置 (类似 tauri check)
-#   dev      一键启动开发环境 (类似 tauri dev)
-#   build    编译工作空间
-#   stop     停止所有运行中的节点
-#   status   查看系统状态
-#   can      CAN设备管理 (auto/status/setup/install-driver)
+# Blueberry S4 - 两步启动 CLI
+# Step 1: sudo ./s4 init  (初始化 CAN)
+# Step 2: ./s4 dev        (启动 ROS2 + AGV + Web)
 
 set -e
 
-# 颜色定义
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-NC='\033[0m'
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+BLUE='\033[0;34m'; CYAN='\033[0;36m'; NC='\033[0m'
 
-# 路径配置
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-S4_WS="$HOME/s4_ws"
+PID_FILE="/tmp/s4_pids"
 
-# ==================== 工具函数 ====================
+print() { echo -e "${BLUE}[S4]${NC} $1"; }
+ok() { echo -e "${GREEN}[S4]${NC} $1"; }
+warn() { echo -e "${YELLOW}[S4]${NC} $1"; }
+err() { echo -e "${RED}[S4]${NC} $1"; }
 
-print_header() {
+header() {
     echo ""
     echo -e "${CYAN}╔════════════════════════════════════════════════════════╗${NC}"
     echo -e "${CYAN}║${NC}           🫐 Blueberry S4 机器人平台                   ${CYAN}║${NC}"
@@ -35,442 +25,241 @@ print_header() {
     echo ""
 }
 
-print_info() { echo -e "${BLUE}[S4]${NC} $1"; }
-print_success() { echo -e "${GREEN}[S4]${NC} $1"; }
-print_warning() { echo -e "${YELLOW}[S4]${NC} $1"; }
-print_error() { echo -e "${RED}[S4]${NC} $1"; }
-
-# 检查ROS2环境
 check_ros2() {
-    if command -v ros2 &> /dev/null; then
-        return 0
-    elif [ -f "/opt/ros/humble/setup.bash" ]; then
-        source /opt/ros/humble/setup.bash
-        return 0
-    else
-        return 1
-    fi
+    [ -f "/opt/ros/humble/setup.bash" ] && source /opt/ros/humble/setup.bash
+    command -v ros2 &>/dev/null
 }
 
-# 获取CAN接口状态
-get_can_status() {
-    local iface=$1
-    if ip link show "$iface" &>/dev/null; then
-        ip -br link show "$iface" 2>/dev/null | awk '{print $2}'
-    else
-        echo "missing"
-    fi
-}
-
-# ==================== check 命令 ====================
-
-cmd_check() {
-    print_header
-    echo -e "${BLUE}🔍 运行环境检查...${NC}"
-    echo ""
-    
-    local errors=0
-    local warnings=0
-    
-    # 1. 检查 ROS2
-    echo -e "${BLUE}📦 ROS2 环境:${NC}"
-    if check_ros2; then
-        print_success "ROS2 Humble 已安装"
-    else
-        print_error "ROS2 未安装"
-        ((errors++))
-    fi
-    echo ""
-    
-    # 2. 检查工作空间
-    echo -e "${BLUE}🔨 工作空间:${NC}"
-    if [ -d "$PROJECT_DIR/install" ]; then
-        print_success "已编译 ($PROJECT_DIR)"
-        # 检查关键包
-        for pkg in bringup; do
-            if [ -d "$PROJECT_DIR/install/$pkg" ]; then
-                echo "  ✅ $pkg"
-            else
-                echo "  ⚠️  $pkg (缺失)"
-                ((warnings++))
-            fi
-        done
-    else
-        print_warning "未编译"
-        echo "  运行: ./s4 build"
-        ((warnings++))
-    fi
-    echo ""
-    
-    # 3. 检查依赖
-    echo -e "${BLUE}🔧 依赖:${NC}"
-    if python3 -c "import can" 2>/dev/null; then
-        print_success "python-can 已安装"
-    else
-        print_warning "python-can 未安装"
-        echo "  安装: pip3 install python-can"
-        ((warnings++))
-    fi
-    
-    if command -v colcon &> /dev/null; then
-        print_success "colcon 已安装"
-    else
-        print_warning "colcon 未安装"
-        ((warnings++))
-    fi
-    echo ""
-    
-    # 4. 检查 CAN 设备
-    echo -e "${BLUE}📡 CAN 接口:${NC}"
-    local has_can=false
-    for iface in can0 can1 can2; do
-        local status=$(get_can_status $iface)
-        if [ "$status" != "missing" ]; then
-            has_can=true
-            if [[ "$status" == *"UP"* ]]; then
-                print_success "$iface ($status)"
-            else
-                print_warning "$iface ($status)"
-                ((warnings++))
-            fi
+get_agv_iface() {
+    # 动态检测 pcan 接口（实时，不依赖缓存文件）
+    for iface in $(ls /sys/class/net/ 2>/dev/null | grep -E '^can' | sort -V); do
+        if ip -details link show "$iface" 2>/dev/null | grep -q "pcan:"; then
+            echo "$iface"
+            return 0
         fi
     done
-    
-    if [ "$has_can" = false ]; then
-        print_warning "未找到 CAN 接口"
-        echo "  配置: sudo ./s4 can auto"
-        ((warnings++))
-    fi
-    echo ""
-    
-    # 5. 检查运行中的节点
-    echo -e "${BLUE}🤖 运行状态:${NC}"
-    if pgrep -f "ros2 launch bringup" > /dev/null; then
-        print_warning "机器人正在运行中"
-        echo "  停止: ./s4 stop"
-    else
-        print_success "无运行中的节点"
-    fi
-    echo ""
-    
-    # 总结
-    echo -e "${CYAN}════════════════════════════════════════════════════════${NC}"
-    if [ $errors -eq 0 ] && [ $warnings -eq 0 ]; then
-        print_success "检查通过！可以启动项目"
-        echo ""
-        echo "启动命令:"
-        echo "  ./s4 dev       # 硬件模式"
-        echo "  ./s4 dev sim   # 仿真模式"
+    # 如果检测失败，尝试缓存文件
+    if [ -f /tmp/can_pcan.iface ]; then
+        cat /tmp/can_pcan.iface
         return 0
-    else
-        [ $errors -gt 0 ] && print_error "错误: $errors"
-        [ $warnings -gt 0 ] && print_warning "警告: $warnings"
-        echo ""
-        echo "修复建议:"
-        [ $errors -gt 0 ] && echo "  1. 安装 ROS2: bash scripts/setup_ros2_env.sh"
-        echo "  2. 编译项目: ./s4 build"
-        echo "  3. 配置 CAN: sudo ./s4 can auto"
-        return 1
     fi
+    # 默认回退
+    echo "can3"
 }
 
-# ==================== dev 命令 ====================
+has_driver_iface() {
+    local driver="$1"
+    for iface in $(ls /sys/class/net/ 2>/dev/null | grep -E '^can' | sort -V); do
+        if ip -details link show "$iface" 2>/dev/null | grep -q "${driver}:"; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+save_pid() {
+    echo $1 >> "$PID_FILE"
+}
+
+cleanup() {
+    print "正在停止所有服务..."
+    if [ -f "$PID_FILE" ]; then
+        while read pid; do
+            kill $pid 2>/dev/null || true
+        done < "$PID_FILE"
+        rm -f "$PID_FILE"
+    fi
+    pkill -f "ros2 launch bringup" 2>/dev/null || true
+    pkill -f "rosbridge_server" 2>/dev/null || true
+    ok "已停止"
+}
+
+# ============ 核心命令 ============
+
+cmd_init() {
+    header
+    
+    if [ "$EUID" -ne 0 ]; then
+        err "需要 root: sudo ./s4 init"
+        exit 1
+    fi
+    
+    print "╔═══════════════════════════════════════════════════════╗"
+    print "║  步骤 1: 初始化 CAN 设备                              ║"
+    print "╚═══════════════════════════════════════════════════════╝"
+    
+    python3 "$SCRIPT_DIR/can_initializer.py"
+    
+    if ! has_driver_iface "pcan" || ! has_driver_iface "usbcanfd"; then
+        err "CAN 初始化失败"
+        exit 1
+    fi
+    
+    echo ""
+    ok "✅ CAN 初始化完成"
+    ok "AGV 接口: $(get_agv_iface) (pcan)"
+    ok "WHJ 接口: $(cat /tmp/can_usbcanfd.iface 2>/dev/null || echo 'can?') (usbcanfd)"
+    echo ""
+    ok "下一步:  ./scripts/s4 dev  (启动 ROS2 + AGV + Web)"
+    echo ""
+}
 
 cmd_dev() {
     local mode="${1:-hw}"
+    header
     
-    print_header
-    
-    # 检查ROS2
-    print_info "[1/4] 检查 ROS2 环境..."
-    if ! check_ros2; then
-        print_error "ROS2 未安装"
+    # 检查 CAN 是否已初始化
+    if ! has_driver_iface "pcan"; then
+        err "CAN 未初始化"
+        print "请先运行: sudo ./s4 init"
         exit 1
     fi
-    print_success "ROS2 就绪"
-    echo ""
     
-    # 配置CAN（非仿真模式）
-    if [ "$mode" != "sim" ]; then
-        print_info "[2/4] 检查 CAN 设备..."
-        
-        local active_can=""
-        for iface in can0 can1 can2; do
-            if [[ "$(get_can_status $iface)" == *"UP"* ]]; then
-                active_can=$iface
-                break
-            fi
-        done
-        
-        if [ -n "$active_can" ]; then
-            print_success "CAN 就绪: $active_can"
-        else
-            print_warning "CAN 未配置"
-            if [ "$EUID" -eq 0 ]; then
-                bash "$SCRIPT_DIR/can_manager.sh" auto
-            else
-                echo "  运行: sudo ./s4 can auto"
-                read -p "  是否现在配置? (y/N) " -n 1 -r
-                echo
-                if [[ $REPLY =~ ^[Yy]$ ]]; then
-                    sudo bash "$SCRIPT_DIR/can_manager.sh" auto
-                else
-                    print_warning "继续启动，但硬件可能无法通信"
-                fi
-            fi
-        fi
-        echo ""
+    # 检查 ROS2
+    print "[1/3] 检查 ROS2..."
+    if ! check_ros2; then
+        err "ROS2 未安装"
+        exit 1
     fi
     
-    # 编译检查
-    print_info "[3/4] 检查编译状态..."
     if [ ! -d "$PROJECT_DIR/install" ]; then
-        print_warning "未编译，自动编译..."
-        cmd_build
-    else
-        print_success "已编译"
+        err "工作空间未编译"
+        print "运行: ./s4 build"
+        exit 1
     fi
+    ok "ROS2 就绪"
+    
+    # 清理之前的状态
+    rm -f "$PID_FILE"
+    trap cleanup EXIT INT TERM
+    
+    source /opt/ros/humble/setup.bash
+    source "$PROJECT_DIR/install/setup.bash"
+    
+    # 启动 AGV
+    print "[2/3] 启动 ROS2 + AGV..."
+    local agv_iface=$(get_agv_iface)
+    ok "检测到 AGV 接口: $agv_iface (pcan)"
+    
+    ros2 launch bringup robot.launch.py can_agv_interface:=$agv_iface &
+    save_pid $!
+    sleep 5
+    
+    if ! pgrep -f "ros2 launch bringup" > /dev/null; then
+        err "AGV 启动失败"
+        exit 1
+    fi
+    ok "AGV 已启动"
+    
+    # 启动 Web
+    print "[3/3] 启动 Web Dashboard..."
+    IP=$(hostname -I | awk '{print $1}')
+    
+    # rosbridge_server
+    if ros2 pkg list 2>/dev/null | grep -q rosbridge_server; then
+        ros2 launch rosbridge_server rosbridge_websocket_launch.xml port:=9091 &
+        save_pid $!
+        sleep 2
+    fi
+    
+    # HTTP 服务器
+    cd "$PROJECT_DIR/web_dashboard"
+    python3 -m http.server 8080 &
+    save_pid $!
+    sleep 1
+    
     echo ""
-    
-    # 加载环境
-    print_info "[4/4] 加载环境..."
-    cd "$PROJECT_DIR"
-    source install/setup.bash
-    print_success "环境就绪"
+    print "╔═══════════════════════════════════════════════════════╗"
+    print "║  ✅ 系统启动完成！                                     ║"
+    print "╚═══════════════════════════════════════════════════════╝"
     echo ""
-    
-    # 启动参数
-    local launch_args=""
-    local can_interface="${active_can:-can0}"
-    
-    case "$mode" in
-        sim)
-            print_info "📟 仿真模式"
-            launch_args="sim:=true use_teleop:=false"
-            ;;
-        teleop)
-            print_info "🎮 硬件模式 + 键盘遥控"
-            launch_args="sim:=false use_agv:=true use_teleop:=true can_agv_interface:=$can_interface"
-            ;;
-        hw|*)
-            print_info "🔧 硬件模式"
-            launch_args="sim:=false use_agv:=true use_teleop:=false use_whj:=false use_kinco:=false use_cameras:=false use_lidar:=false can_agv_interface:=$can_interface"
-            ;;
-    esac
-    
+    ok "🌐 访问地址:"
+    ok "   AGV 控制: http://$IP:8080/agv_test_control.html"
+    ok "   主页:     http://$IP:8080"
+    ok "   WebSocket: ws://$IP:9091"
     echo ""
-    echo -e "${CYAN}════════════════════════════════════════════════════════${NC}"
-    print_success "🚀 启动机器人..."
-    echo -e "${CYAN}════════════════════════════════════════════════════════${NC}"
-    echo ""
-    
-    ros2 launch bringup robot.launch.py $launch_args
+    ok "按 Ctrl+C 停止所有服务"
+    wait
 }
 
-# ==================== build 命令 ====================
-
-cmd_build() {
-    print_header
+cmd_check() {
+    header
+    print "系统状态检查"
+    echo ""
     
-    if ! check_ros2; then
-        print_error "ROS2 未安装"
-        exit 1
+    check_ros2 && ok "ROS2 Humble" || err "ROS2 未安装"
+    [ -d "$PROJECT_DIR/install" ] && ok "工作空间已编译" || warn "未编译"
+    
+    echo ""
+    print "CAN 接口:"
+    for iface in $(ls /sys/class/net/ 2>/dev/null | grep -E '^can' | sort -V); do
+        driver=$(ip -details link show "$iface" 2>/dev/null | grep -oE "(pcan|usbcanfd|mttcan)" | head -1)
+        state=$(ip -br link show "$iface" 2>/dev/null | awk '{print $2}')
+        echo "  $iface: $state ($driver)"
+    done
+    
+    if [ -f /tmp/can_pcan.iface ]; then
+        echo ""
+        ok "AGV -> $(cat /tmp/can_pcan.iface) (pcan)"
+        ok "WHJ -> $(cat /tmp/can_usbcanfd.iface) (usbcanfd)"
     fi
     
+    echo ""
+    pgrep -f "ros2 launch bringup" >/dev/null && ok "AGV 运行中" || warn "AGV 未运行"
+    
+    echo ""
+}
+
+cmd_stop() {
+    header
+    cleanup
+}
+
+cmd_build() {
+    header
+    check_ros2 || { err "ROS2 未安装"; exit 1; }
     cd "$PROJECT_DIR"
     
-    # 清理（如果指定）
     if [ "$1" == "clean" ]; then
-        print_warning "清理编译目录..."
+        warn "清理..."
         rm -rf build install log
     fi
     
-    print_info "安装依赖..."
-    rosdep update 2>/dev/null || true
-    rosdep install --from-paths src --ignore-src -y 2>/dev/null || \
-        print_warning "部分依赖安装失败，继续..."
-    
-    echo ""
-    print_info "编译工作空间..."
+    print "编译中..."
     colcon build --symlink-install "$@"
-    
-    echo ""
-    print_success "编译完成！"
-    echo ""
-    echo "加载环境: source install/setup.bash"
+    ok "编译完成"
 }
-
-# ==================== stop 命令 ====================
-
-cmd_stop() {
-    print_header
-    
-    print_info "停止机器人..."
-    
-    local stopped=false
-    
-    if pgrep -f "ros2 launch bringup" > /dev/null; then
-        pkill -f "ros2 launch bringup" 2>/dev/null || true
-        print_success "停止 launch 进程"
-        stopped=true
-    fi
-    
-    if pgrep -f "can_bridge" > /dev/null; then
-        pkill -f "can_bridge" 2>/dev/null || true
-        print_success "停止 CAN 桥接"
-        stopped=true
-    fi
-    
-    if pgrep -f "teleop_keyboard" > /dev/null; then
-        pkill -f "teleop_keyboard" 2>/dev/null || true
-        print_success "停止键盘遥控"
-        stopped=true
-    fi
-    
-    if [ "$stopped" = false ]; then
-        print_warning "没有运行中的进程"
-    else
-        echo ""
-        print_success "机器人已停止"
-    fi
-}
-
-# ==================== status 命令 ====================
-
-cmd_status() {
-    print_header
-    
-    # ROS2 状态
-    echo -e "${BLUE}📦 ROS2:${NC}"
-    if check_ros2; then
-        echo -e "  ${GREEN}●${NC} 已安装"
-    else
-        echo -e "  ${RED}●${NC} 未安装"
-    fi
-    echo ""
-    
-    # 工作空间
-    echo -e "${BLUE}🔨 工作空间:${NC}"
-    if [ -d "$PROJECT_DIR/install" ]; then
-        echo -e "  ${GREEN}●${NC} 已编译"
-    else
-        echo -e "  ${YELLOW}●${NC} 未编译"
-    fi
-    echo ""
-    
-    # CAN 接口
-    echo -e "${BLUE}📡 CAN 接口:${NC}"
-    for iface in can0 can1 can2; do
-        local status=$(get_can_status $iface)
-        if [ "$status" != "missing" ]; then
-            if [[ "$status" == *"UP"* ]]; then
-                echo -e "  ${GREEN}●${NC} $iface ($status)"
-            else
-                echo -e "  ${YELLOW}●${NC} $iface ($status)"
-            fi
-        else
-            echo -e "  ${RED}●${NC} $iface (不存在)"
-        fi
-    done
-    echo ""
-    
-    # 运行中的节点
-    echo -e "${BLUE}🤖 运行中的节点:${NC}"
-    local has_nodes=false
-    if pgrep -f "ros2 launch bringup" > /dev/null; then
-        echo -e "  ${GREEN}●${NC} ros2 launch bringup"
-        has_nodes=true
-    fi
-    if pgrep -f "can_bridge" > /dev/null; then
-        echo -e "  ${GREEN}●${NC} can_bridge"
-        has_nodes=true
-    fi
-    if [ "$has_nodes" = false ]; then
-        echo -e "  ${YELLOW}●${NC} 无"
-    fi
-    echo ""
-    
-    # 快速操作
-    echo -e "${BLUE}📋 快速操作:${NC}"
-    echo "  检查:  ./s4 check"
-    echo "  启动:  ./s4 dev"
-    echo "  停止:  ./s4 stop"
-    echo ""
-}
-
-# ==================== can 命令 ====================
-
-cmd_can() {
-    # 委托给 can_manager.sh
-    bash "$SCRIPT_DIR/can_manager.sh" "$@"
-}
-
-# ==================== help 命令 ====================
 
 cmd_help() {
-    print_header
-    echo "Blueberry S4 - 主控脚本"
-    echo ""
-    echo "Usage: ./s4 [COMMAND] [ARGS...]"
-    echo ""
-    echo "Commands:"
-    echo "  check              检查项目环境和依赖"
-    echo "  dev [sim|teleop]   启动开发环境 (hw:硬件模式, sim:仿真, teleop:带遥控)"
-    echo "  build [clean]      编译工作空间 (clean: 清理后编译)"
-    echo "  stop               停止所有运行中的节点"
-    echo "  status             查看系统状态"
-    echo "  can <cmd>          CAN设备管理 (auto/status/setup/install-driver)"
-    echo "  help               显示帮助"
-    echo ""
-    echo "Examples:"
-    echo "  ./s4 check                    # 检查环境"
-    echo "  ./s4 dev                      # 启动硬件模式"
-    echo "  ./s4 dev sim                  # 启动仿真模式"
-    echo "  ./s4 dev teleop               # 硬件+键盘遥控"
-    echo "  ./s4 build                    # 编译"
-    echo "  ./s4 build clean              # 清理并编译"
-    echo "  sudo ./s4 can auto            # 自动配置 CAN"
-    echo "  ./s4 can status               # 查看 CAN 状态"
-    echo ""
+    header
+    cat << 'EOF'
+Blueberry S4 - 两步启动
+
+使用方法:
+
+  步骤 1: 初始化 CAN (需要 root)
+    $ sudo ./scripts/s4 init 
+
+  步骤 2: 启动 ROS2 + AGV + Web
+    $ ./scripts/s4 dev   
+
+  然后浏览器访问显示的地址
+
+其他命令:
+  ./s4 check      检查系统状态
+  ./s4 stop       停止所有服务
+  ./s4 build      编译工作空间
+
+EOF
 }
 
-# ==================== 主函数 ====================
+cd "$PROJECT_DIR" 2>/dev/null || true
 
-main() {
-    cd "$PROJECT_DIR" 2>/dev/null || true
-    
-    case "${1:-help}" in
-        check)
-            cmd_check
-            ;;
-        dev)
-            shift
-            cmd_dev "$@"
-            ;;
-        build)
-            shift
-            cmd_build "$@"
-            ;;
-        stop)
-            cmd_stop
-            ;;
-        status)
-            cmd_status
-            ;;
-        can)
-            shift
-            cmd_can "$@"
-            ;;
-        help|-h|--help)
-            cmd_help
-            ;;
-        *)
-            print_error "未知命令: $1"
-            echo ""
-            cmd_help
-            exit 1
-            ;;
-    esac
-}
-
-main "$@"
+case "${1:-help}" in
+    init)   cmd_init ;;
+    dev)    shift; cmd_dev "$@" ;;
+    check)  cmd_check ;;
+    stop)   cmd_stop ;;
+    build)  shift; cmd_build "$@" ;;
+    help|*) cmd_help ;;
+esac

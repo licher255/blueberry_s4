@@ -446,6 +446,7 @@ let currentGear = 6;  // 默认4T4D档
 let isMoving = false;
 let currentDirection = null;
 let cmdPublisher = null;
+let steeringCmdPublisher = null;
 let ioPublisher = null;
 let chassisSubscriber = null;
 let unlockInterval = null;
@@ -455,6 +456,7 @@ let cmdInterval = null;
 let currentSpeedX = 0;
 let currentSpeedY = 0;
 let currentSpeedZ = 0;
+let currentSteeringAngle = 0;  // 当前转向角度
 
 // ==================== 初始化 ====================
 function init() {
@@ -534,6 +536,13 @@ function initPublishers() {
         messageType: 'yhs_can_interfaces/msg/CtrlCmd'
     });
     
+    // 转向控制命令发布者 (4T4D模式需要)
+    steeringCmdPublisher = new ROSLIB.Topic({
+        ros: ros,
+        name: '/steering_ctrl_cmd',
+        messageType: 'yhs_can_interfaces/msg/SteeringCtrlCmd'
+    });
+    
     // IO命令发布者
     ioPublisher = new ROSLIB.Topic({
         ros: ros,
@@ -605,6 +614,7 @@ function sendUnlockSequence() {
 // ==================== 档位设置 ====================
 function setGear(gear) {
     currentGear = gear;
+    currentSteeringAngle = 0;  // 切换档位时重置转向
     
     // 更新按钮样式
     document.getElementById('gear4T4D').className = gear === 6 ? 'gear-btn active' : 'gear-btn';
@@ -656,36 +666,42 @@ function startMove(direction) {
             currentSpeedX = maxSpeedX;
             currentSpeedY = 0;
             currentSpeedZ = 0;
+            currentSteeringAngle = 0;  // 直行
             break;
         case 'backward':
             currentSpeedX = -maxSpeedX;
             currentSpeedY = 0;
             currentSpeedZ = 0;
+            currentSteeringAngle = 0;  // 直行
             break;
         case 'left':
             if (currentGear === 6) {
-                // 4T4D模式：左旋转
+                // 4T4D模式：左旋转（轮子转向45度）
                 currentSpeedX = 0;
                 currentSpeedY = 0;
                 currentSpeedZ = zRad;  // 逆时针为正
+                currentSteeringAngle = 45;  // 轮子转向45度
             } else {
                 // 横移模式：左平移
                 currentSpeedX = 0;
                 currentSpeedY = maxSpeedY;  // 左为正
                 currentSpeedZ = 0;
+                currentSteeringAngle = 0;
             }
             break;
         case 'right':
             if (currentGear === 6) {
-                // 4T4D模式：右旋转
+                // 4T4D模式：右旋转（轮子转向45度）
                 currentSpeedX = 0;
                 currentSpeedY = 0;
                 currentSpeedZ = -zRad;  // 顺时针为负
+                currentSteeringAngle = -45;  // 轮子转向-45度
             } else {
                 // 横移模式：右平移
                 currentSpeedX = 0;
                 currentSpeedY = -maxSpeedY;  // 右为负
                 currentSpeedZ = 0;
+                currentSteeringAngle = 0;
             }
             break;
     }
@@ -710,6 +726,7 @@ function stopMove() {
     currentSpeedX = 0;
     currentSpeedY = 0;
     currentSpeedZ = 0;
+    currentSteeringAngle = 0;  // 重置转向角度
     
     // 清除定时器
     if (cmdInterval) {
@@ -729,14 +746,24 @@ function stopMove() {
 function sendCommand() {
     if (!isConnected || !cmdPublisher) return;
     
+    // 发送底盘控制命令
     const cmd = new ROSLIB.Message({
         ctrl_cmd_gear: currentGear,
         ctrl_cmd_x_linear: currentSpeedX,
         ctrl_cmd_y_linear: currentSpeedY,
         ctrl_cmd_z_angular: currentSpeedZ
     });
-    
     cmdPublisher.publish(cmd);
+    
+    // 发送转向控制命令 (4T4D模式需要同时发送)
+    if (steeringCmdPublisher) {
+        const steeringCmd = new ROSLIB.Message({
+            ctrl_cmd_gear: currentGear,
+            steering_ctrl_cmd_velocity: Math.abs(currentSpeedX),  // 转向时的速度
+            steering_ctrl_cmd_steering: currentSteeringAngle     // 转向角度
+        });
+        steeringCmdPublisher.publish(steeringCmd);
+    }
 }
 
 function updateButtonState(activeDirection, isPressed) {
@@ -771,6 +798,16 @@ function emergencyStop() {
             ctrl_cmd_z_angular: 0
         });
         cmdPublisher.publish(cmd);
+    }
+    
+    if (isConnected && steeringCmdPublisher) {
+        // 发送转向停止命令
+        const steeringCmd = new ROSLIB.Message({
+            ctrl_cmd_gear: 0,
+            steering_ctrl_cmd_velocity: 0,
+            steering_ctrl_cmd_steering: 0
+        });
+        steeringCmdPublisher.publish(steeringCmd);
     }
     
     addLog('🛑 紧急停止已激活！', 'error');

@@ -1,0 +1,16 @@
+/**:
+  ros__parameters:
+    # CAN interface configuration
+    can_name: "can1"        # CAN interface name (can0, can1, etc.)
+    canfd_enabled: true     # Enable CAN-FD mode
+    
+    # WHJ device configuration
+    device_id: 1            # WHJ device CAN ID
+    heartbeat_interval: 100 # Heartbeat interval in ms
+    
+    # Position limits (mm)
+    min_position: 0.0
+    max_position: 500.0
+    
+    # Speed limits (mm/s)
+    max_speed: 100.0
