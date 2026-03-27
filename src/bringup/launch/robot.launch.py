@@ -89,7 +89,7 @@ def generate_launch_description():
         executable='yhs_can_control_node',
         name='agv_node',
         parameters=[{
-            'can_name': 'can2',  # AGV 实际连接在 can2
+            'can_name': can_agv_interface,  # 动态检测的 CAN 接口
         }],
         condition=IfCondition(use_agv),
         output='screen',

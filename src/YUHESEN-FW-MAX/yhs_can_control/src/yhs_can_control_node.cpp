@@ -4,10 +4,10 @@ namespace yhs
 {
 
   CanControl::CanControl(rclcpp::Node::SharedPtr node)
-      : node_(node), if_name_("can2"), can_socket_(-1)
+      : node_(node), if_name_("can0"), can_socket_(-1)
   {
 
-    READ_PARAM(std::string, "can_name", (if_name_), "can2");
+    READ_PARAM(std::string, "can_name", (if_name_), "can0");
 
     io_cmd_subscriber_ = node_->create_subscription<yhs_can_interfaces::msg::IoCmd>(
         "io_cmd",
@@ -248,7 +248,7 @@ namespace yhs
     }
     else if (ret == 0)
     {
-      RCLCPP_ERROR_STREAM(rclcpp::get_logger("yhs_can_control_node"), "Timeout waiting for CAN frame! Please check whether the can2 setting is correct,\
+      RCLCPP_ERROR_STREAM(rclcpp::get_logger("yhs_can_control_node"), "Timeout waiting for CAN frame! Please check whether the " << if_name_ << " setting is correct,\
 whether the can line is connected correctly, and whether the chassis is powered on.");
       return false;
     }
