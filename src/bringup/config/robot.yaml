@@ -1,5 +1,6 @@
 # S4 - 机器人配置
 # 这个文件被 launch 文件加载
+# ⚠️ 注意：CAN 接口配置由启动时动态检测，以下值仅供参考
 
 /**:
   ros__parameters:
@@ -7,14 +8,15 @@
     robot_name: "blueberry_s4"
     version: "0.1.0"
     
-    # CAN 接口配置
+    # CAN 接口配置 (动态分配，仅供参考)
+    # 实际接口通过 /tmp/can_{driver}.iface 文件动态检测
     can:
       agv:
-        interface: "can0"
+        interface: "can0"    # 将被动态分配的 pcan 接口覆盖
         bitrate: 500000
         type: "can2.0"
       devices:
-        interface: "can1"
+        interface: "can1"    # 将被动态分配的 usbcanfd 接口覆盖
         bitrate: 1000000
         dbitrate: 5000000
         type: "canfd"

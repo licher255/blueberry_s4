@@ -1,19 +1,53 @@
 #!/bin/bash
 # AGV CAN 信号硬编码测试脚本
 # 严格遵循YUHESEN官方协议
+#
+# 使用方法:
+#   ./can_debug_test.sh          # 自动检测 pcan 接口
+#   ./can_debug_test.sh can3     # 指定接口
+
+# 动态检测 pcan 接口
+get_pcan_interface() {
+    # 方法1: 检查缓存文件
+    if [ -f /tmp/can_pcan.iface ]; then
+        cat /tmp/can_pcan.iface
+        return 0
+    fi
+    
+    # 方法2: 实时检测
+    for iface in $(ls /sys/class/net/ 2>/dev/null | grep -E '^can' | sort -V); do
+        if ip -details link show "$iface" 2>/dev/null | grep -q "pcan:"; then
+            echo "$iface"
+            return 0
+        fi
+    done
+    
+    return 1
+}
+
+# 获取CAN接口
+if [ $# -ge 1 ]; then
+    CAN_IF="$1"
+else
+    CAN_IF=$(get_pcan_interface)
+    if [ -z "$CAN_IF" ]; then
+        echo "错误: 未找到 pcan 接口，请指定接口名称 (如: ./can_debug_test.sh can3)"
+        exit 1
+    fi
+fi
 
 echo "======================================"
 echo "   AGV CAN 硬编码信号测试"
 echo "======================================"
 echo ""
+echo "使用接口: $CAN_IF"
 echo "此脚本将直接发送CAN帧，绕过ROS"
 echo ""
 
-CAN_IF="can3"
-
 # 检查CAN接口
-if ! ip link show $CAN_IF | grep -q "UP"; then
+if ! ip link show $CAN_IF 2>/dev/null | grep -q "UP"; then
     echo "错误: $CAN_IF 未启动"
+    echo "请先运行: sudo ./scripts/s4 init"
     exit 1
 fi
 

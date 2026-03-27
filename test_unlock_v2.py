@@ -2,15 +2,67 @@
 """
 AGV解锁测试脚本 V2
 完全匹配YUHESEN C++驱动的实现
+
+使用方法:
+  python3 test_unlock_v2.py           # 自动检测 pcan 接口
+  python3 test_unlock_v2.py can3      # 指定接口
 """
 import socket
 import struct
 import time
 import sys
+import os
+import glob
+
+def get_pcan_interface():
+    """动态检测 pcan 接口"""
+    # 方法1: 检查缓存文件
+    cache_file = "/tmp/can_pcan.iface"
+    if os.path.exists(cache_file):
+        with open(cache_file, 'r') as f:
+            iface = f.read().strip()
+            if iface:
+                return iface
+    
+    # 方法2: 实时检测
+    for iface in sorted(glob.glob('/sys/class/net/can*')):
+        iface_name = os.path.basename(iface)
+        try:
+            with open(f'/sys/class/net/{iface_name}/device/uevent', 'r') as f:
+                content = f.read()
+                if 'pcan' in content.lower() or 'peak' in content.lower():
+                    return iface_name
+        except:
+            pass
+        # 检查 ip link 输出
+        import subprocess
+        try:
+            result = subprocess.run(['ip', '-details', 'link', 'show', iface_name], 
+                                  capture_output=True, text=True)
+            if 'pcan:' in result.stdout:
+                return iface_name
+        except:
+            pass
+    
+    return None
+
+# 获取CAN接口
+if len(sys.argv) > 1:
+    interface_name = sys.argv[1]
+else:
+    interface_name = get_pcan_interface()
+    if interface_name is None:
+        print("错误: 未找到 pcan 接口，请指定接口名称 (如: python3 test_unlock_v2.py can3)")
+        sys.exit(1)
+
+print(f"=" * 60)
+print(f"AGV解锁和运动测试")
+print(f"使用接口: {interface_name}")
+print(f"=" * 60)
 
 # 创建CAN socket
 sock = socket.socket(socket.PF_CAN, socket.SOCK_RAW, socket.CAN_RAW)
-interface = b"can3"
+interface = interface_name.encode()
 sock.bind((interface,))
 
 # 设置接收超时

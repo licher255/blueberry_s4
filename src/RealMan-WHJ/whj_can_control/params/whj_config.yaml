@@ -1,7 +1,8 @@
 /**:
   ros__parameters:
     # CAN interface configuration
-    can_name: "can1"        # CAN interface name (can0, can1, etc.)
+    # ⚠️ 注意：can_name 会被 launch 文件动态覆盖，此默认值仅作为回退
+    can_name: "can1"        # 默认回退值，实际由 launch 文件通过 /tmp/can_usbcanfd.iface 动态分配
     canfd_enabled: true     # Enable CAN-FD mode
     
     # WHJ device configuration

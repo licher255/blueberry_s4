@@ -1,3 +1,5 @@
+# YUHESEN FW-Max AGV CAN 配置
+# ⚠️ 注意：can_name 会被 launch 文件动态覆盖，此默认值仅作为回退
 yhs_can_control_node:
   ros__parameters:
-    can_name: "can0"
+    can_name: "can0"  # 默认回退值，实际由 launch 文件通过 /tmp/can_pcan.iface 动态分配

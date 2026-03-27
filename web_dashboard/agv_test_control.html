@@ -598,12 +598,13 @@ function sendUnlockSequence() {
             unlockInterval = setInterval(() => {
                 if (isConnected) {
                     // 持续发送 unlock=1, lamp=1 (0x03) 保持解锁
+                    // 必须高频发送（10ms），否则AGV会停止响应
                     ioPublisher.publish(new ROSLIB.Message({
                         io_cmd_unlock: true,
                         io_cmd_lamp_ctrl: true
                     }));
                 }
-            }, 100); // 10Hz
+            }, 10); // 100Hz，与CAN协议要求一致
         }
     }
     
@@ -645,16 +646,32 @@ function updateSpeedDisplay() {
 }
 
 // ==================== 移动控制 ====================
+let lastStopTime = 0;  // 上次停止时间
+
 function startMove(direction) {
-    if (!isConnected || isMoving) return;
+    if (!isConnected) return;
+    
+    // 防止在停止后 200ms 内立即启动（避免事件冲突）
+    const now = Date.now();
+    if (now - lastStopTime < 200) {
+        console.log('忽略快速启动请求');
+        return;
+    }
+    
+    // 如果已经在移动，忽略
+    if (isMoving) {
+        return;
+    }
     
     isMoving = true;
     currentDirection = direction;
     
     // 获取设置的速度
-    const maxSpeedX = parseFloat(document.getElementById('speedXSlider').value);
-    const maxSpeedY = parseFloat(document.getElementById('speedYSlider').value);
-    const maxSpeedZ = parseFloat(document.getElementById('speedZSlider').value);
+    const maxSpeedX = parseFloat(document.getElementById('speedXSlider').value) || 0.05;
+    const maxSpeedY = parseFloat(document.getElementById('speedYSlider').value) || 0.05;
+    const maxSpeedZ = parseFloat(document.getElementById('speedZSlider').value) || 10;
+    
+    addLog('速度设置: X=' + maxSpeedX.toFixed(2) + ', Y=' + maxSpeedY.toFixed(2) + ', Z=' + maxSpeedZ.toFixed(1), 'info');
     
     // 根据方向和档位设置速度
     // 注意：ROS接口使用 m/s 和 rad/s
@@ -721,6 +738,8 @@ function startMove(direction) {
 function stopMove() {
     if (!isMoving) return;
     
+    lastStopTime = Date.now();
+    
     isMoving = false;
     currentDirection = null;
     currentSpeedX = 0;
@@ -745,6 +764,11 @@ function stopMove() {
 
 function sendCommand() {
     if (!isConnected || !cmdPublisher) return;
+    
+    // 调试日志（限制频率）
+    if (isMoving && currentSpeedX === 0 && currentSpeedY === 0 && currentSpeedZ === 0) {
+        addLog('警告: isMoving=true 但速度全为0', 'error');
+    }
     
     // 发送底盘控制命令
     const cmd = new ROSLIB.Message({

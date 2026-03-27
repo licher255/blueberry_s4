@@ -4,10 +4,10 @@ namespace yhs
 {
 
   CanControl::CanControl(rclcpp::Node::SharedPtr node)
-      : node_(node), if_name_("can2"), can_socket_(-1)
+      : node_(node), if_name_("can0"), can_socket_(-1)
   {
 
-    READ_PARAM(std::string, "can_name", (if_name_), "can2");
+    READ_PARAM(std::string, "can_name", (if_name_), "can0");
 
     io_cmd_subscriber_ = node_->create_subscription<yhs_can_interfaces::msg::IoCmd>(
         "io_cmd",
@@ -27,39 +27,15 @@ namespace yhs
     chassis_info_fb_publisher_ = node_->create_publisher<yhs_can_interfaces::msg::ChassisInfoFb>("chassis_info_fb", 1);
 
     odom_pub_ = node_->create_publisher<nav_msgs::msg::Odometry>("odom", 1);
-    
-    // Create timer to maintain unlock state (50ms = 20Hz)
-    io_maintain_timer_ = node_->create_wall_timer(
-        std::chrono::milliseconds(50),
-        std::bind(&CanControl::io_maintain_callback, this));
-    
-    // Create timer to maintain control commands (10ms = 100Hz, YUHESEN protocol)
-    ctrl_maintain_timer_ = node_->create_wall_timer(
-        std::chrono::milliseconds(10),
-        std::bind(&CanControl::ctrl_maintain_callback, this));
   }
 
   void CanControl::io_cmd_callback(const yhs_can_interfaces::msg::IoCmd::SharedPtr io_cmd_msg)
   {
-    // Store the IO command state
-    current_io_cmd_ = *io_cmd_msg;
-    io_cmd_received_ = true;
-    
-    // Send immediately
-    io_maintain_callback();
-  }
-  
-  void CanControl::io_maintain_callback()
-  {
-    if (!io_cmd_received_) return;
-    
-    yhs_can_interfaces::msg::IoCmd msg = current_io_cmd_;
+    yhs_can_interfaces::msg::IoCmd msg = *io_cmd_msg;
     static unsigned char count = 0;
 
     unsigned char sendDataTemp[8] = {0};
 
-    // 直接发送解锁状态：0x03 = lamp(0x01) + unlock(0x02)
-    // 车辆需要持续的解锁信号才能响应控制命令
     if (msg.io_cmd_lamp_ctrl)
       sendDataTemp[0] |= 0x01;
     if (msg.io_cmd_unlock)
@@ -85,6 +61,7 @@ namespace yhs
       sendDataTemp[1] |= 0x40;
 
     sendDataTemp[2] = msg.io_cmd_speaker;
+
     sendDataTemp[3] = msg.io_cmd_wireless_charge;
 
     count++;
@@ -96,18 +73,11 @@ namespace yhs
     sendDataTemp[7] = sendDataTemp[0] ^ sendDataTemp[1] ^ sendDataTemp[2] ^ sendDataTemp[3] ^ sendDataTemp[4] ^ sendDataTemp[5] ^ sendDataTemp[6];
 
     can_frame send_frame;
+
     send_frame.can_id = 0x18C4D7D0 | CAN_EFF_FLAG;  // Extended frame format
     send_frame.can_dlc = 8;
-    memcpy(send_frame.data, sendDataTemp, 8);
 
-    // Debug: Print IO command details
-    RCLCPP_INFO(rclcpp::get_logger("yhs_can_control_node"), 
-                "IO_CMD: lamp_ctrl=%d, unlock=%d, D0=0x%02X",
-                msg.io_cmd_lamp_ctrl, msg.io_cmd_unlock, sendDataTemp[0]);
-    RCLCPP_INFO(rclcpp::get_logger("yhs_can_control_node"), 
-                "CAN TX: ID=0x%08X, Data=[%02X %02X %02X %02X %02X %02X %02X %02X]",
-                send_frame.can_id, sendDataTemp[0], sendDataTemp[1], sendDataTemp[2], sendDataTemp[3],
-                sendDataTemp[4], sendDataTemp[5], sendDataTemp[6], sendDataTemp[7]);
+    memcpy(send_frame.data, sendDataTemp, 8);
 
     int ret = write(can_socket_, &send_frame, sizeof(send_frame));
     if (ret <= 0)
@@ -118,93 +88,68 @@ namespace yhs
 
   void CanControl::ctrl_cmd_callback(const yhs_can_interfaces::msg::CtrlCmd::SharedPtr ctrl_cmd_msg)
   {
-    // Store the control command state
-    current_ctrl_cmd_ = *ctrl_cmd_msg;
-    ctrl_cmd_received_ = true;
+    yhs_can_interfaces::msg::CtrlCmd msg = *ctrl_cmd_msg;
     
-    // Send immediately for responsiveness
-    ctrl_maintain_callback();
-  }
-  
-  void CanControl::ctrl_maintain_callback()
-  {
-    if (!ctrl_cmd_received_) return;
+    RCLCPP_INFO(rclcpp::get_logger("yhs_can_control_node"), 
+                "CTRL_CMD received: gear=%d, x=%.3f, y=%.3f, z=%.3f",
+                msg.ctrl_cmd_gear, msg.ctrl_cmd_x_linear, 
+                msg.ctrl_cmd_y_linear, msg.ctrl_cmd_z_angular);
     
-    yhs_can_interfaces::msg::CtrlCmd msg = current_ctrl_cmd_;
-    
-    // YUHESEN FW-Max 官方CAN协议
-    // X轴线速度：0.001m/s/bit，16位有符号数（实际使用12位，需要符号扩展）
-    // Z轴角速度：0.01°/s/bit，16位有符号数
-    
-    // 转换速度值为原始数据
-    // 注意：ROS消息中Z轴是rad/s，需要转换为°/s (×180/π)
-    const short x_raw = static_cast<short>(msg.ctrl_cmd_x_linear * 1000);  // 0.001 m/s/bit
-    const short z_raw = static_cast<short>(msg.ctrl_cmd_z_angular * 180.0 / 3.14159265 * 100);  // rad/s -> 0.01°/s
-    const short y_raw = static_cast<short>(msg.ctrl_cmd_y_linear * 1000);  // 0.001 m/s/bit
+    const short ctrl_cmd_x_linear = msg.ctrl_cmd_x_linear * 1000;
+    const short ctrl_cmd_z_angular = msg.ctrl_cmd_z_angular * 100;
+    const short ctrl_cmd_y_linear = msg.ctrl_cmd_y_linear * 1000;
     const unsigned char gear = msg.ctrl_cmd_gear;
 
     static unsigned char count = 0;
     unsigned char sendDataTemp[8] = {0};
 
-    // Byte 0: bit0-3=gear, bit4-7=x[3:0]
-    sendDataTemp[0] = (gear & 0x0F) | ((x_raw & 0x0F) << 4);
-    
-    // Byte 1: x[11:4]
-    sendDataTemp[1] = (x_raw >> 4) & 0xFF;
-    
-    // Byte 2: bit0-3=x[15:12], bit4-7=z[3:0]
-    short x_raw_copy = x_raw;
-    unsigned short x_raw_u = *reinterpret_cast<unsigned short*>(&x_raw_copy);
-    unsigned char x_high_nibble = (x_raw_u >> 12) & 0x0F;
-    sendDataTemp[2] = x_high_nibble | ((z_raw & 0x0F) << 4);
-    
-    // Byte 3: z[11:4]
-    sendDataTemp[3] = (z_raw >> 4) & 0xFF;
-    
-    // Byte 4: bit0-3=z[15:12], bit4-7=y[3:0]
-    short z_raw_copy = z_raw;
-    short y_raw_copy = y_raw;
-    unsigned short z_raw_u = *reinterpret_cast<unsigned short*>(&z_raw_copy);
-    unsigned short y_raw_u = *reinterpret_cast<unsigned short*>(&y_raw_copy);
-    unsigned char z_high_nibble = (z_raw_u >> 12) & 0x0F;
-    sendDataTemp[4] = z_high_nibble | ((y_raw & 0x0F) << 4);
-    
-    // Byte 5: y[11:4]
-    sendDataTemp[5] = (y_raw >> 4) & 0xFF;
-    
-    // Byte 6: bit0-3=y[15:12], bit4-7=frame counter
-    unsigned char y_high_nibble = (y_raw_u >> 12) & 0x0F;
-    sendDataTemp[6] = y_high_nibble | (count << 4);
+    sendDataTemp[0] = sendDataTemp[0] | (0x0f & gear);
+
+    sendDataTemp[0] = sendDataTemp[0] | (0xf0 & ((ctrl_cmd_x_linear & 0x0f) << 4));
+
+    sendDataTemp[1] = (ctrl_cmd_x_linear >> 4) & 0xff;
+
+    sendDataTemp[2] = sendDataTemp[2] | (0x0f & (ctrl_cmd_x_linear >> 12));
+
+    sendDataTemp[2] = sendDataTemp[2] | (0xf0 & ((ctrl_cmd_z_angular & 0x0f) << 4));
+
+    sendDataTemp[3] = (ctrl_cmd_z_angular >> 4) & 0xff;
+
+    sendDataTemp[4] = sendDataTemp[4] | (0x0f & (ctrl_cmd_z_angular >> 12));
+
+    sendDataTemp[4] = sendDataTemp[4] | (0xf0 & ((ctrl_cmd_y_linear & 0x0f) << 4));
+
+    sendDataTemp[5] = (ctrl_cmd_y_linear >> 4) & 0xff;
+
+    sendDataTemp[6] = sendDataTemp[6] | (0x0f & (ctrl_cmd_y_linear >> 12));
 
     count++;
+
     if (count == 16)
       count = 0;
 
-    // Byte 7: CRC
-    sendDataTemp[7] = sendDataTemp[0] ^ sendDataTemp[1] ^ sendDataTemp[2] ^ sendDataTemp[3] 
-                      ^ sendDataTemp[4] ^ sendDataTemp[5] ^ sendDataTemp[6];
+    sendDataTemp[6] = sendDataTemp[6] | (count << 4);
+
+    sendDataTemp[7] = sendDataTemp[0] ^ sendDataTemp[1] ^ sendDataTemp[2] ^ sendDataTemp[3] ^ sendDataTemp[4] ^ sendDataTemp[5] ^ sendDataTemp[6];
 
     can_frame send_frame;
-    send_frame.can_id = 0x18C4D1D0 | CAN_EFF_FLAG;
-    send_frame.can_dlc = 8;
-    memcpy(send_frame.data, sendDataTemp, 8);
 
-    // Debug: Print control command details (throttle to avoid log spam)
-    static int debug_counter = 0;
-    if (debug_counter++ % 50 == 0) {
-      RCLCPP_INFO(rclcpp::get_logger("yhs_can_control_node"), 
-                  "CTRL_CMD: gear=%d, x=%.3f, y=%.3f, z=%.3f",
-                  gear, msg.ctrl_cmd_x_linear, msg.ctrl_cmd_y_linear, msg.ctrl_cmd_z_angular);
-    }
-    RCLCPP_INFO(rclcpp::get_logger("yhs_can_control_node"), 
-                "CAN TX: ID=0x%08X, Data=[%02X %02X %02X %02X %02X %02X %02X %02X]",
-                send_frame.can_id, sendDataTemp[0], sendDataTemp[1], sendDataTemp[2], sendDataTemp[3],
-                sendDataTemp[4], sendDataTemp[5], sendDataTemp[6], sendDataTemp[7]);
+    send_frame.can_id = 0x18C4D1D0 | CAN_EFF_FLAG;  // Extended frame format
+    send_frame.can_dlc = 8;
+
+    memcpy(send_frame.data, sendDataTemp, 8);
 
     int ret = write(can_socket_, &send_frame, sizeof(send_frame));
     if (ret <= 0)
     {
       RCLCPP_ERROR_STREAM(rclcpp::get_logger("yhs_can_control_node"), "Failed to send message: " << strerror(errno));
+    }
+    else
+    {
+      RCLCPP_INFO(rclcpp::get_logger("yhs_can_control_node"), 
+                  "CAN TX: ID=0x%08X, Data=[%02X %02X %02X %02X %02X %02X %02X %02X]",
+                  send_frame.can_id, sendDataTemp[0], sendDataTemp[1], sendDataTemp[2], sendDataTemp[3],
+                  sendDataTemp[4], sendDataTemp[5], sendDataTemp[6], sendDataTemp[7]);
     }
   }
 
@@ -271,7 +216,7 @@ namespace yhs
     }
     else if (ret == 0)
     {
-      RCLCPP_ERROR_STREAM(rclcpp::get_logger("yhs_can_control_node"), "Timeout waiting for CAN frame! Please check whether the can2 setting is correct,\
+      RCLCPP_ERROR_STREAM(rclcpp::get_logger("yhs_can_control_node"), "Timeout waiting for CAN frame! Please check whether the " << if_name_ << " setting is correct,\
 whether the can line is connected correctly, and whether the chassis is powered on.");
       return false;
     }
@@ -296,7 +241,7 @@ whether the can line is connected correctly, and whether the chassis is powered 
       {
         switch (recv_frame.can_id)
         {
-        case 0x18C4D1EF:
+        case 0x98C4D1EF:
         {
           yhs_can_interfaces::msg::CtrlFb msg;
           msg.ctrl_fb_gear = 0x0f & recv_frame.data[0];
@@ -320,7 +265,7 @@ whether the can line is connected correctly, and whether the chassis is powered 
           break;
         }
 
-        case 0x18C4D2EF:
+        case 0x98C4D2EF:
         {
           yhs_can_interfaces::msg::SteeringCtrlFb msg;
           msg.steering_ctrl_fb_gear = 0x0f & recv_frame.data[0];
@@ -339,7 +284,7 @@ whether the can line is connected correctly, and whether the chassis is powered 
           break;
         }
 
-        case 0x18C4D6EF:
+        case 0x98C4D6EF:
         {
           yhs_can_interfaces::msg::LfWheelFb msg;
           msg.lf_wheel_fb_velocity = static_cast<float>(static_cast<short>(recv_frame.data[1] << 8 | recv_frame.data[0])) / 1000;
@@ -356,7 +301,7 @@ whether the can line is connected correctly, and whether the chassis is powered 
           break;
         }
 
-        case 0x18C4D7EF:
+        case 0x98C4D7EF:
         {
           yhs_can_interfaces::msg::LrWheelFb msg;
           msg.lr_wheel_fb_velocity = static_cast<float>(static_cast<short>(recv_frame.data[1] << 8 | recv_frame.data[0])) / 1000;
@@ -373,7 +318,7 @@ whether the can line is connected correctly, and whether the chassis is powered 
           break;
         }
 
-        case 0x18C4D8EF:
+        case 0x98C4D8EF:
         {
           yhs_can_interfaces::msg::RrWheelFb msg;
           msg.rr_wheel_fb_velocity = static_cast<float>(static_cast<short>(recv_frame.data[1] << 8 | recv_frame.data[0])) / 1000;
@@ -390,7 +335,7 @@ whether the can line is connected correctly, and whether the chassis is powered 
           break;
         }
 
-        case 0x18C4D9EF:
+        case 0x98C4D9EF:
         {
           yhs_can_interfaces::msg::RfWheelFb msg;
           msg.rf_wheel_fb_velocity = static_cast<float>(static_cast<short>(recv_frame.data[1] << 8 | recv_frame.data[0])) / 1000;
@@ -407,7 +352,7 @@ whether the can line is connected correctly, and whether the chassis is powered 
           break;
         }
 
-        case 0x18C4DAEF:
+        case 0x98C4DAEF:
         {
           yhs_can_interfaces::msg::IoFb msg;
           msg.io_fb_lamp_ctrl = (recv_frame.data[0] & 0x01) != 0;
@@ -447,7 +392,7 @@ whether the can line is connected correctly, and whether the chassis is powered 
           break;
         }
 
-        case 0x18C4DCEF:
+        case 0x98C4DCEF:
         {
           yhs_can_interfaces::msg::FrontAngleFb msg;
           msg.front_angle_fb_l = static_cast<float>(static_cast<short>(recv_frame.data[1] << 8 | recv_frame.data[0])) / 100;
@@ -464,7 +409,7 @@ whether the can line is connected correctly, and whether the chassis is powered 
           break;
         }
 
-        case 0x18C4DDEF:
+        case 0x98C4DDEF:
         {
           yhs_can_interfaces::msg::RearAngleFb msg;
           msg.rear_angle_fb_l = static_cast<float>(static_cast<short>(recv_frame.data[1] << 8 | recv_frame.data[0])) / 100;
@@ -481,7 +426,7 @@ whether the can line is connected correctly, and whether the chassis is powered 
           break;
         }
 
-        case 0x18C4E1EF:
+        case 0x98C4E1EF:
         {
           yhs_can_interfaces::msg::BmsFb msg;
           msg.bms_fb_voltage = static_cast<float>(static_cast<unsigned short>(recv_frame.data[1] << 8 | recv_frame.data[0])) / 100;
@@ -500,7 +445,7 @@ whether the can line is connected correctly, and whether the chassis is powered 
           break;
         }
 
-        case 0x18C4E2EF:
+        case 0x98C4E2EF:
         {
           yhs_can_interfaces::msg::BmsFlagFb msg;
           msg.bms_flag_fb_soc = recv_frame.data[0];
@@ -595,8 +540,6 @@ whether the can line is connected correctly, and whether the chassis is powered 
 
   bool CanControl::run()
   {
-    RCLCPP_INFO(rclcpp::get_logger("yhs_can_control_node"), "Using CAN interface: %s", if_name_.c_str());
-    
     can_socket_ = socket(PF_CAN, SOCK_RAW, CAN_RAW);
     if (can_socket_ < 0)
     {

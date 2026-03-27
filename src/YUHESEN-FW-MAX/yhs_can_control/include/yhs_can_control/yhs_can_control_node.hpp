@@ -56,19 +56,7 @@ private:
   rclcpp::Publisher<yhs_can_interfaces::msg::ChassisInfoFb>::SharedPtr chassis_info_fb_publisher_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
   
-  // Timers for maintaining CAN commands
-  rclcpp::TimerBase::SharedPtr io_maintain_timer_;
-  rclcpp::TimerBase::SharedPtr ctrl_maintain_timer_;
-  
-  // Current command states
-  yhs_can_interfaces::msg::IoCmd current_io_cmd_;
-  yhs_can_interfaces::msg::CtrlCmd current_ctrl_cmd_;
-  bool io_cmd_received_ = false;
-  bool ctrl_cmd_received_ = false;
-  
   void io_cmd_callback(const yhs_can_interfaces::msg::IoCmd::SharedPtr io_cmd_msg);
-  void io_maintain_callback();
-  void ctrl_maintain_callback();
   
   void ctrl_cmd_callback(const yhs_can_interfaces::msg::CtrlCmd::SharedPtr ctrl_cmd_msg);
 
@@ -86,4 +74,3 @@ private:
 
 
 #endif
-
