@@ -1,0 +1,9 @@
+std_msgs/Header header
+uint8 motor_id
+float32 target_position_deg
+float32 target_speed_rpm
+float32 target_current_ma
+uint8 work_mode
+bool enable
+bool clear_error
+bool set_zero
