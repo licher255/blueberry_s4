@@ -10,8 +10,31 @@ echo "======================================"
 
 # 配置
 WORKSPACE="$HOME/Blueberry_s4"
-CAN_INTERFACE="can2"
 ROSBRIDGE_PORT="9091"
+
+# CAN 设备映射文件
+CAN_MAPPING_FILE="/tmp/s4_can_mapping.conf"
+
+# 获取映射的 CAN 接口
+get_can_agv_interface() {
+    if [ -f "$CAN_MAPPING_FILE" ]; then
+        grep "^can_agv=" "$CAN_MAPPING_FILE" | cut -d'=' -f2
+    else
+        # 自动检测 PEAK 设备
+        for iface in $(ls /sys/class/net/ 2>/dev/null | grep -E "^can" | sort -V); do
+            if [ -L "/sys/class/net/$iface/device/driver" ]; then
+                local driver=$(readlink -f "/sys/class/net/$iface/device/driver" 2>/dev/null | xargs basename 2>/dev/null)
+                if [ "$driver" == "pcan" ]; then
+                    echo "$iface"
+                    return
+                fi
+            fi
+        done
+        echo "can_agv"  # 返回逻辑名作为后备
+    fi
+}
+
+CAN_INTERFACE=$(get_can_agv_interface)
 
 # 颜色输出
 RED='\033[0;31m'
@@ -31,14 +54,20 @@ check_ros2() {
 # 检查CAN接口
 check_can() {
     echo -e "\n${YELLOW}[1/5] 检查CAN接口...${NC}"
+    
+    # 显示检测到的接口
+    echo "检测到 AGV CAN 接口: $CAN_INTERFACE"
+    
     if ! ip link show "$CAN_INTERFACE" &> /dev/null; then
         echo -e "${RED}CAN接口 $CAN_INTERFACE 不存在${NC}"
         echo "正在尝试配置CAN接口..."
         cd "$WORKSPACE"
-        sudo ./scripts/s4 can auto || {
+        sudo ./scripts/s4 init || {
             echo -e "${RED}CAN配置失败，请手动检查${NC}"
             exit 1
         }
+        # 重新检测
+        CAN_INTERFACE=$(get_can_agv_interface)
     fi
     
     # 检查CAN状态
@@ -47,7 +76,13 @@ check_can() {
         sudo ip link set "$CAN_INTERFACE" up
     fi
     
-    echo -e "${GREEN}✓ CAN接口 $CAN_INTERFACE 已就绪${NC}"
+    # 显示驱动信息
+    local driver="unknown"
+    if [ -L "/sys/class/net/$CAN_INTERFACE/device/driver" ]; then
+        driver=$(readlink -f "/sys/class/net/$CAN_INTERFACE/device/driver" 2>/dev/null | xargs basename 2>/dev/null)
+    fi
+    
+    echo -e "${GREEN}✓ CAN接口 $CAN_INTERFACE 已就绪 ($driver)${NC}"
 }
 
 # 加载工作空间环境

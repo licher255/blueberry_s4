@@ -154,7 +154,8 @@ ros2 launch bringup robot.launch.py
 
 # With parameters
 ros2 launch bringup robot.launch.py sim:=true
-ros2 launch bringup robot.launch.py can_agv_interface:=can2
+# 手动指定物理接口 (不推荐，建议用 s4 init 自动配置)
+ros2 launch bringup robot.launch.py can_agv_interface:=can3 can_devices_interface:=can2
 ```
 
 ### Launch Arguments
@@ -166,8 +167,10 @@ ros2 launch bringup robot.launch.py can_agv_interface:=can2
 | `use_kinco` | `true` | Enable Kinco servo |
 | `use_cameras` | `false` | Enable D405 cameras |
 | `use_lidar` | `false` | Enable Livox lidar |
-| `can_agv_interface` | `can0` | CAN interface for AGV |
-| `can_devices_interface` | `can1` | CAN interface for other devices |
+| `can_agv_interface` | `can_agv` | CAN interface for AGV (PEAK PCAN-USB) |
+| `can_devices_interface` | `can_fd` | CAN interface for WHJ+Kinco (ZLG CANFD) |
+
+> **说明**: `can_agv` 和 `can_fd` 是逻辑名，运行 `sudo ./s4 init` 后会自动映射到实际的物理接口 (can2/can3 等)。
 
 ---
 
@@ -358,25 +361,43 @@ rqt_graph
 ## CAN Device Management
 
 ### Supported Devices
-| Device Type | Driver | Interface Name |
-|-------------|--------|----------------|
-| Jetson Built-in CAN | mttcan | can0/can1 |
-| PEAK USB-CAN | pcan | can2+ |
-| Generic USB-CAN | gs_usb | can2+ |
+| Device Type | Driver | Logical Name | Physical Interface |
+|-------------|--------|--------------|-------------------|
+| Jetson Built-in CAN | mttcan | - | can0/can1 |
+| PEAK USB-CAN | pcan | `can_agv` | can2/can3 (auto-detected) |
+| ZLG CAN-FD | usbcanfd | `can_fd` | can2/can3 (auto-detected) |
+
+> **逻辑名说明**: 运行 `sudo ./s4 init` 后，系统会自动检测 USB-CAN 设备并创建映射文件 `/tmp/s4_can_mapping.conf`，将 `can_agv` 映射到 PEAK 设备，`can_fd` 映射到 ZLG 设备。
 
 ### Quick Commands
 ```bash
-# Check status
-./scripts/s4 can status
+# Check CAN status and device mapping
+./scripts/s4 status
 
-# Auto configure all CAN devices
-sudo ./scripts/s4 can auto
+# Initialize and auto-configure all CAN devices
+sudo ./scripts/s4 init
 
-# Setup specific interface
-sudo ./scripts/s4 can setup can2 500000
-
-# Install PEAK driver
+# Install PEAK driver (if needed)
 sudo ./scripts/s4 can install-driver
+```
+
+### CAN Device Mapping
+
+S4 使用**逻辑名**来标识 CAN 设备，避免因 USB 枚举顺序变化导致接口名混乱：
+
+```bash
+# 查看当前映射
+./scripts/s4 status
+
+# 示例输出:
+# CAN Device Mapping:
+#   ● can_agv -> can3 (pcan)     # AGV (PEAK)
+#   ● can_fd  -> can2 (usbcanfd) # WHJ + Kinco (ZLG)
+```
+
+**手动指定物理接口** (不推荐，除非你知道确切接口名):
+```bash
+ros2 launch bringup robot.launch.py can_agv_interface:=can3 can_devices_interface:=can2
 ```
 
 ### Auto-start Service (可选)

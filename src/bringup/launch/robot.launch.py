@@ -57,16 +57,18 @@ def generate_launch_description():
     )
     
     # CAN 接口配置
+    # 使用逻辑名：can_agv (PEAK PCAN-USB for AGV), can_fd (ZLG CANFD for WHJ+Kinco)
+    # 实际映射由 s4 init 自动检测并写入 /tmp/s4_can_mapping.conf
     can_agv_arg = DeclareLaunchArgument(
         'can_agv_interface',
-        default_value='can2',  # AGV 实际连接在 can2
-        description='CAN interface for AGV'
+        default_value='can_agv',  # 逻辑名，指向 PEAK PCAN-USB
+        description='CAN interface for AGV (PEAK PCAN-USB)'
     )
     
     can_devices_arg = DeclareLaunchArgument(
         'can_devices_interface',
-        default_value='can1',
-        description='CAN interface for other devices'
+        default_value='can_fd',   # 逻辑名，指向 ZLG CANFD
+        description='CAN interface for WHJ+Kinco (ZLG CANFD)'
     )
     
     # ==================== 获取参数值 ====================

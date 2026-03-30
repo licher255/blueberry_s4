@@ -48,19 +48,49 @@ else
     fi
 fi
 
-# 检查CAN接口
+# 检查CAN接口映射
 echo -e "\n5. 检查CAN接口..."
-if ip link show can2 &> /dev/null; then
-    echo "  ✓ can2存在"
-    if ip link show can2 | grep -q "UP"; then
-        echo "  ✓ can2已启动"
+
+# 获取映射的 CAN 接口
+can_agv_iface="can_agv"
+can_fd_iface="can_fd"
+if [ -f "/tmp/s4_can_mapping.conf" ]; then
+    can_agv_iface=$(grep "^can_agv=" /tmp/s4_can_mapping.conf | cut -d'=' -f2)
+    can_fd_iface=$(grep "^can_fd=" /tmp/s4_can_mapping.conf | cut -d'=' -f2)
+fi
+
+# 检查 AGV CAN (PEAK)
+if [ -n "$can_agv_iface" ] && ip link show "$can_agv_iface" &> /dev/null; then
+    local driver="unknown"
+    if [ -L "/sys/class/net/$can_agv_iface/device/driver" ]; then
+        driver=$(readlink -f "/sys/class/net/$can_agv_iface/device/driver" 2>/dev/null | xargs basename 2>/dev/null)
+    fi
+    echo "  ✓ AGV CAN ($can_agv_iface) 存在 [$driver]"
+    if ip link show "$can_agv_iface" | grep -q "UP"; then
+        echo "  ✓ AGV CAN 已启动"
     else
-        echo "  ⚠ can2未启动"
-        echo "  请运行: sudo ./scripts/s4 can auto"
+        echo "  ⚠ AGV CAN 未启动"
+        echo "  请运行: sudo ./scripts/s4 init"
     fi
 else
-    echo "  ✗ can2不存在"
-    echo "  请运行: sudo ./scripts/s4 can auto"
+    echo "  ✗ AGV CAN 未找到"
+    echo "  请运行: sudo ./scripts/s4 init"
+fi
+
+# 检查 Device CAN (ZLG)
+if [ -n "$can_fd_iface" ] && ip link show "$can_fd_iface" &> /dev/null; then
+    local driver="unknown"
+    if [ -L "/sys/class/net/$can_fd_iface/device/driver" ]; then
+        driver=$(readlink -f "/sys/class/net/$can_fd_iface/device/driver" 2>/dev/null | xargs basename 2>/dev/null)
+    fi
+    echo "  ✓ Device CAN ($can_fd_iface) 存在 [$driver]"
+    if ip link show "$can_fd_iface" | grep -q "UP"; then
+        echo "  ✓ Device CAN 已启动"
+    else
+        echo "  ⚠ Device CAN 未启动"
+    fi
+else
+    echo "  ⚠ Device CAN 未找到 (ZLG CANFD)"
 fi
 
 # 检查占用端口的进程

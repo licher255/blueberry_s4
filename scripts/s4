@@ -316,7 +316,7 @@ cmd_dev() {
         can_fd_iface="can_fd"
     fi
     
-    # 2. 准备 Web Dashboard (agv_test_control.html 作为主页)
+    # 2. 准备 Web Dashboard (s4_dashboard.html 作为主页)
     info "Setting up web dashboard..."
     cd "$PROJECT_DIR/web_dashboard"
     
@@ -325,8 +325,10 @@ cmd_dev() {
         cp index.html index.html.s4backup
     fi
     
-    # 使用 agv_test_control.html 作为主页
-    if [ -f "agv_test_control.html" ]; then
+    # 使用 s4_dashboard.html 作为主页 (AGV + WHJ 综合控制)
+    if [ -f "s4_dashboard.html" ]; then
+        cp s4_dashboard.html index.html
+    elif [ -f "agv_test_control.html" ]; then
         cp agv_test_control.html index.html
     fi
     
@@ -377,7 +379,25 @@ cmd_dev() {
     fi
     ok "AGV started"
     
-    # 5. 启动 Rosbridge
+    # 5. 启动 WHJ 节点 (Python版本，带轨迹规划)
+    info "Starting WHJ node..."
+    ros2 run whj_can_py whj_can_node \
+        --ros-args \
+        -p can_interface:=$can_fd_iface \
+        -p motor_id:=7 \
+        -p max_velocity:=800.0 \
+        -p max_acceleration:=1500.0 > /tmp/s4_whj.log 2>&1 &
+    local whj_pid=$!
+    echo $whj_pid > "$PID_DIR/whj.pid"
+    
+    sleep 3
+    if ps -p $whj_pid > /dev/null 2>&1; then
+        ok "WHJ started (with trajectory planning)"
+    else
+        warn "WHJ failed to start! Check: tail -f /tmp/s4_whj.log"
+    fi
+    
+    # 6. 启动 Rosbridge
     ros2 launch rosbridge_server rosbridge_websocket_launch.xml port:=$ws_port > /dev/null 2>&1 &
     echo $! > "$PID_DIR/rosbridge.pid"
     echo $ws_port > "$PID_DIR/rosbridge.port"
@@ -402,7 +422,10 @@ cmd_dev() {
     echo ""
     echo -e "  📡 WebSocket (internal): ws://localhost:$ws_port"
     echo ""
-    echo -e "  Use WASD or arrow keys to control AGV"
+    echo -e "  🎮 AGV: Use WASD or arrow keys to control"
+    echo -e "  🔧 WHJ: Enable → Set target position → Move (with trajectory planning)"
+    echo -e "  📊 Check web dashboard for real-time status"
+    echo ""
     echo -e "  Press Ctrl+C to stop"
     echo ""
     echo -e "${G}════════════════════════════════════════════════════════${R}"
@@ -411,12 +434,25 @@ cmd_dev() {
     cleanup() {
         echo ""
         info "Stopping..."
+        
+        # 发送禁用命令给 WHJ (优雅关闭)
+        if [ -f "$PID_DIR/whj.pid" ]; then
+            info "Disabling WHJ..."
+            source "$PROJECT_DIR/install/setup.bash" 2>/dev/null && \
+            ros2 topic pub /whj_cmd whj_can_interfaces/msg/WhjCmd "{motor_id: 7, enable: false}" --once 2>/dev/null || true
+            sleep 0.5
+        fi
+        
+        # 停止所有进程
         for f in "$PID_DIR"/*.pid; do
             [ -f "$f" ] && kill $(cat "$f") 2>/dev/null; rm -f "$f"
         done
+        
+        # 恢复原始 index.html
         if [ -f "$PROJECT_DIR/web_dashboard/index.html.s4backup" ]; then
             mv "$PROJECT_DIR/web_dashboard/index.html.s4backup" "$PROJECT_DIR/web_dashboard/index.html"
         fi
+        
         ok "Stopped"
     }
     
@@ -433,6 +469,14 @@ cmd_dev() {
 cmd_stop() {
     info "Stopping..."
     
+    # 先禁用 WHJ (优雅关闭)
+    if [ -f "$PID_DIR/whj.pid" ] || pgrep -f "whj_can_node" > /dev/null; then
+        info "Disabling WHJ..."
+        source "$PROJECT_DIR/install/setup.bash" 2>/dev/null && \
+        ros2 topic pub /whj_cmd whj_can_interfaces/msg/WhjCmd "{motor_id: 7, enable: false}" --once 2>/dev/null || true
+        sleep 0.5
+    fi
+    
     [ -d "$PID_DIR" ] && for f in "$PID_DIR"/*.pid; do
         [ -f "$f" ] && kill $(cat "$f") 2>/dev/null; rm -f "$f"
     done
@@ -440,6 +484,7 @@ cmd_stop() {
     pkill -f "ros2 launch bringup" 2>/dev/null || true
     pkill -f "rosbridge" 2>/dev/null || true
     pkill -f "http.server.*8" 2>/dev/null || true
+    pkill -f "whj_can_node" 2>/dev/null || true
     
     if [ -f "$PROJECT_DIR/web_dashboard/index.html.s4backup" ]; then
         mv "$PROJECT_DIR/web_dashboard/index.html.s4backup" "$PROJECT_DIR/web_dashboard/index.html"
@@ -490,6 +535,7 @@ cmd_status() {
     # Services
     echo "Services:"
     pgrep -f "ros2 launch bringup" > /dev/null && echo -e "  ${G}●${R} AGV"
+    pgrep -f "whj_can_node" > /dev/null && echo -e "  ${G}●${R} WHJ (with trajectory planning)"
     pgrep -f "rosbridge" > /dev/null && echo -e "  ${G}●${R} Rosbridge"
     pgrep -f "http.server" > /dev/null && echo -e "  ${G}●${R} Web ($(cat "$PID_DIR/http.port" 2>/dev/null || echo 8080))"
     echo ""
@@ -513,7 +559,7 @@ cmd_help() {
     echo "  init          Initialize CAN hardware (needs sudo)"
     echo "  build         Build the workspace"
     echo "  build clean   Clean build"
-    echo "  dev           Start dev environment (auto-opens browser)"
+    echo "  dev           Start dev environment (AGV + WHJ + Web Dashboard)"
     echo "  dev sim       Simulation mode"
     echo "  dev teleop    With keyboard control"
     echo "  stop          Stop all services"
