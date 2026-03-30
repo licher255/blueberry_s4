@@ -271,7 +271,9 @@ whether the can line is connected correctly, and whether the chassis is powered 
 
       if (read(can_socket_, &recv_frame, sizeof(recv_frame)) >= 0)
       {
-        switch (recv_frame.can_id)
+        // Mask out CAN_EFF_FLAG and other flags to get pure CAN ID
+        canid_t can_id = recv_frame.can_id & 0x1FFFFFFF;
+        switch (can_id)
         {
         case 0x18C4D1EF:
         {

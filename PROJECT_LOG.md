@@ -1381,3 +1381,290 @@ http://<jetson-ip>:8080
 
 *记录时间: 2026-03-25*  
 *里程碑: AGV 控制调通 ✅*
+
+
+---
+
+## 2026-03-27: CAN 设备命名修复尝试
+
+### 今日目标
+修复 `can_agv` 别名问题，使 PEAK USB-CAN 设备能稳定映射为 `can_agv` 接口。
+
+### 当前状态
+
+| 组件 | 状态 | 说明 |
+|------|------|------|
+| ROS2 环境 | ✅ 完全可用 | colcon 编译正常，launch 文件运行正常 |
+| Jetson 内置 CAN | ✅ 正常 | can0/can1 (mttcan 驱动) @ 500Kbps |
+| ZLG CANFD | ✅ 正常 | can2 (usbcanfd 驱动) @ 1Mbps |
+| **PEAK PCAN-USB** | ❌ **驱动损坏** | 设备未识别，无法创建 SocketCAN 接口 |
+
+### 问题回溯
+
+1. **原始状态**: PEAK 设备使用 `pcan` chardev 驱动，工作正常但创建的是 `/dev/pcanusb32` 字符设备，非 SocketCAN 接口
+
+2. **修复尝试**: 尝试切换到 `pcan` netdev 版本以支持 SocketCAN:
+   ```bash
+   # 卸载 chardev 版本
+   sudo rmmod pcan
+   
+   # 编译安装 netdev 版本
+   make netdev
+   sudo make install
+   sudo modprobe pcan
+   ```
+
+3. **失败结果**: 
+   - PEAK USB 设备不再被系统识别（`lsusb` 无 PEAK 设备）
+   - `pcan` 驱动加载后显示 `0 interfaces`
+   - 设备物理连接可能松动或驱动安装导致设备掉线
+
+### 修复尝试记录
+
+```bash
+# 1. 检查 CAN 接口
+$ ip link show type can
+3: can0: <UP> mtu 16 ... mttcan
+4: can1: <UP> mtu 16 ... mttcan  
+6: can2: <UP> mtu 72 ... usbcanfd (ZLG)
+# PEAK 设备对应的 canX 接口消失
+
+# 2. 检查 USB 设备
+$ lsusb | grep PEAK
+# 无输出 - PEAK 设备未识别
+
+$ lsusb | grep -E "(can|peak|zlg)"
+Bus 001 Device 005: ID 3068:0009 ZLG USBCANFD-100U-mini
+# 只有 ZLG 设备，PEAK 不见了
+
+# 3. 检查 pcan 驱动状态
+$ cat /proc/pcan
+*------------------- [mod] [isa] [pci] [pec] [usb] [net] --------------------
+*--------------------- 0 interfaces @ major 487 found -----------------------
+# 0 接口 - 驱动未绑定到设备
+```
+
+### 根本原因分析
+
+1. **驱动切换方式不当**: 直接从 chardev 切换到 netdev 可能需要完全卸载旧驱动并清理内核状态
+2. **设备掉线**: 驱动操作可能导致 USB 设备重新枚举或掉线
+3. **udev 规则冲突**: 之前创建的 udev 规则可能与新驱动不兼容
+
+### 待修复清单（下周继续）
+
+- [ ] **物理检查**: 重新插拔 PEAK USB-CAN 设备，确认硬件连接正常
+- [ ] **驱动重新安装**: 
+  ```bash
+  # 完整卸载
+  sudo rmmod pcan
+  cd drivers/peak-linux-driver-8.18.0
+  sudo make uninstall
+  make clean
+  
+  # 重新编译 netdev 版本
+  make netdev
+  sudo make install
+  sudo modprobe pcan
+  ```
+- [ ] **验证设备识别**: `lsusb | grep PEAK` 应显示 `ID 0c72:000c`
+- [ ] **验证 SocketCAN 接口**: `ip link show` 应出现新的 canX 接口
+- [ ] **配置别名**: 更新 `scripts/install_udev_rules.sh`，正确绑定 `can_agv` 别名
+
+### 临时解决方案
+
+在 PEAK 驱动修复前，**AGV 可临时连接到 Jetson 内置 CAN (can0)**:
+
+```bash
+# 使用内置 CAN 启动
+sudo ./scripts/s4 init
+./scripts/s4 dev
+
+# 或手动指定接口
+ros2 launch bringup robot.launch.py can_agv_interface:=can0
+```
+
+### 修改记录
+
+```
+修改:
+├── scripts/s4                          # 临时默认使用 can0 作为 AGV 接口
+```
+
+### 下次会议
+
+**时间**: 下周  
+**目标**: 修复 PEAK USB-CAN 驱动，恢复 `can_agv` 别名功能  
+**优先级**: 
+1. PEAK 驱动修复（高）
+2. 重新验证 AGV CAN 通信（高）
+3. udev 规则持久化（中）
+
+*记录时间: 2026-03-27*  
+*状态: PEAK 驱动待修复 ⏸️*
+
+
+---
+
+## 2026-03-30: CAN 驱动修复与 AGV 状态反馈完善 ✅
+
+### 修复内容
+
+#### 1. **CAN 设备驱动识别修复** ✅
+**文件**: `scripts/s4`
+
+**问题**: 
+- `can3` (PEAK PCAN-USB) 被错误识别为 `unknown` 驱动
+- `can2` (ZLG CANFD) 被错误映射为 `can_agv`
+
+**根因**: 
+- PEAK 的 `pcan` 驱动没有创建 sysfs symlink，`readlink` 读取失败
+- `ethtool -i` 在 pcan 设备上会卡住
+
+**修复**:
+- 修改 `get_can_driver()` 函数，使用多优先级检测策略：
+  1. `ip -details link show` - 检测 `pcan:` 或 `usbcanfd` 标识（最快）
+  2. `/proc/pcan` - 确认 pcan 设备
+  3. sysfs symlink - 适用于 mttcan/usbcanfd
+  4. ethtool - 最后手段（带 1 秒 timeout）
+
+**结果**:
+```
+can_agv (AGV)  -> can3 (pcan)     ✅ PEAK PCAN-USB
+can_fd (WHJ)   -> can2 (usbcanfd) ✅ ZLG CANFD
+```
+
+---
+
+#### 2. **AGV 状态反馈修复** ✅
+**文件**: `src/YUHESEN-FW-MAX/yhs_can_control/src/yhs_can_control_node.cpp`
+
+**问题**: 
+- Web Dashboard 无法读取 AGV 状态（电压、电量、速度等）
+- `/chassis_info_fb` 话题无数据发布
+
+**根因**: 
+- SocketCAN 接收的扩展帧 ID 包含 `CAN_EFF_FLAG` (0x80000000) 标志
+- Switch case 中的 ID 值没有该标志，导致匹配失败
+- 例：`recv_frame.can_id` = `0x98C4D1EF`，但 case 值是 `0x18C4D1EF`
+
+**修复**:
+```cpp
+// 在 switch 前添加 ID 掩码处理
+if (read(can_socket_, &recv_frame, sizeof(recv_frame)) >= 0)
+{
+    // Mask out CAN_EFF_FLAG and other flags to get pure CAN ID
+    canid_t can_id = recv_frame.can_id & 0x1FFFFFFF;
+    switch (can_id)
+    {
+        case 0x18C4D1EF:  // 现在能正确匹配
+        ...
+    }
+}
+```
+
+**结果**:
+- `/chassis_info_fb` 话题以 **95Hz** 频率正常发布
+- 状态数据完整：
+  - 控制反馈（档位、X/Y/Z 速度）
+  - 电池信息（电压 49.6V、电量 SOC、电流）
+  - 四轮速度反馈
+  - 前后转向角度
+  - IO 状态（车灯、解锁、急停、遥控等）
+
+---
+
+#### 3. **s4 dev 端口提示优化** ✅
+**文件**: `scripts/s4`
+
+**问题**: 
+- 启动后提示 `WebSocket: ws://localhost:9091` 容易混淆
+- 用户可能误以为要在浏览器打开 9091 端口
+
+**修复**:
+- 优化提示信息，明确区分 HTTP 和 WebSocket 端口：
+```
+════════════════════════════════════════════════════════
+
+  🌐 Open in browser: http://localhost:8080
+
+  📡 WebSocket (internal): ws://localhost:9091
+
+  Use WASD or arrow keys to control AGV
+  Press Ctrl+C to stop
+
+════════════════════════════════════════════════════════
+```
+
+---
+
+### 验证测试
+
+```bash
+# 1. 初始化 CAN 设备
+sudo ./scripts/s4 init
+# ✓ can_agv (AGV)  -> can3 (PEAK PCAN-USB)
+# ✓ can_fd (WHJ)   -> can2 (ZLG CANFD)
+
+# 2. 启动系统
+./scripts/s4 dev
+# ✓ Web Dashboard: http://localhost:8080
+# ✓ Rosbridge: ws://localhost:9091
+
+# 3. 验证状态反馈
+ros2 topic hz /chassis_info_fb
+# average rate: 95.206 Hz
+
+ros2 topic echo /chassis_info_fb --once
+# header: ...
+# ctrl_fb: {ctrl_fb_gear: 1, ctrl_fb_x_linear: 0.0, ...}
+# bms_fb: {bms_fb_voltage: 49.6, bms_fb_current: -0.9, ...}
+# bms_flag_fb: {bms_flag_fb_soc: 80, ...}
+```
+
+---
+
+### 当前状态
+
+| 组件 | 状态 | 说明 |
+|------|------|------|
+| CAN 设备映射 | ✅ 正常 | can3→AGV, can2→WHJ |
+| AGV 控制 | ✅ 正常 | 可正常发送控制命令 |
+| AGV 状态反馈 | ✅ 正常 | 95Hz 发布，数据完整 |
+| Web Dashboard | ✅ 正常 | 实时显示电压/电量/速度 |
+| 电池电压 | ✅ 正常 | 49.6V (满电约 54V) |
+| 电池 SOC | ✅ 正常 | 80% |
+
+---
+
+### 文件变更
+
+```
+修改:
+├── scripts/s4                                              # CAN 驱动检测修复，端口提示优化
+└── src/YUHESEN-FW-MAX/yhs_can_control/src/yhs_can_control_node.cpp  # CAN ID 掩码修复
+```
+
+---
+
+### 使用方法
+
+```bash
+# 1. 初始化 CAN 设备（sudo 需要密码: hkclr）
+sudo ./scripts/s4 init
+
+# 2. 编译（如需）
+./scripts/s4 build
+
+# 3. 启动开发环境
+./scripts/s4 dev
+
+# 4. 在浏览器打开
+http://localhost:8080
+
+# 5. 点击 Connect，发送解锁序列后即可控制 AGV
+```
+
+*记录时间: 2026-03-30*  
+*状态: AGV 控制与状态反馈完全正常 ✅*
+
+---

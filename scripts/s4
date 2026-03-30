@@ -15,6 +15,100 @@ ok() { echo -e "${G}✓${R} $1"; }
 info() { echo -e "${C}•${R} $1"; }
 warn() { echo -e "${Y}!${R} $1"; }
 
+# ==================== Helper: 检测 CAN 驱动类型 ====================
+
+get_can_driver() {
+    local iface=$1
+    local driver="unknown"
+    
+    # 方法 1: 检查 ip -details link 输出 (最快，适用于 pcan/usbcanfd)
+    local details=$(ip -details link show "$iface" 2>/dev/null)
+    if echo "$details" | grep -q "pcan:"; then
+        echo "pcan"
+        return
+    fi
+    
+    # 方法 2: 检查 /proc/pcan 确认 pcan 设备
+    if [ -f "/proc/pcan" ]; then
+        if grep -q "$iface" /proc/pcan 2>/dev/null; then
+            echo "pcan"
+            return
+        fi
+    fi
+    
+    # 方法 3: 使用 sysfs symlink (适用于 mttcan, usbcanfd)
+    if [ -L "/sys/class/net/$iface/device/driver" ]; then
+        driver=$(readlink -f "/sys/class/net/$iface/device/driver" 2>/dev/null | xargs basename 2>/dev/null)
+        if [ -n "$driver" ]; then
+            echo "$driver"
+            return
+        fi
+    fi
+    
+    # 方法 4: 使用 ethtool (最后手段，可能卡住)
+    if command -v ethtool &>/dev/null; then
+        driver=$(timeout 1 ethtool -i "$iface" 2>/dev/null | grep "driver:" | awk '{print $2}')
+        if [ -n "$driver" ]; then
+            echo "$driver"
+            return
+        fi
+    fi
+    
+    echo "unknown"
+}
+
+# ==================== Helper: 检测并映射 CAN 设备 ====================
+
+detect_can_mapping() {
+    # 清空之前的映射
+    local mapping_file="/tmp/s4_can_mapping.conf"
+    rm -f "$mapping_file"
+    
+    local can_agv=""
+    local can_fd=""
+    
+    # 遍历所有 CAN 接口
+    for iface in $(ls /sys/class/net/ 2>/dev/null | grep -E "^can" | sort -V); do
+        if ip link show "$iface" &>/dev/null; then
+            local driver=$(get_can_driver "$iface")
+            
+            case "$driver" in
+                pcan)
+                    # PEAK PCAN-USB -> AGV
+                    can_agv="$iface"
+                    ;;
+                usbcanfd)
+                    # ZLG CANFD -> WHJ + Kinco
+                    can_fd="$iface"
+                    ;;
+            esac
+        fi
+    done
+    
+    # 保存映射到文件
+    if [ -n "$can_agv" ] || [ -n "$can_fd" ]; then
+        echo "# S4 CAN Device Mapping - Generated at $(date)" > "$mapping_file"
+        [ -n "$can_agv" ] && echo "can_agv=$can_agv" >> "$mapping_file"
+        [ -n "$can_fd" ] && echo "can_fd=$can_fd" >> "$mapping_file"
+    fi
+    
+    # 输出结果
+    echo "$can_agv $can_fd"
+}
+
+# ==================== Helper: 获取映射的接口 ====================
+
+get_mapped_iface() {
+    local logical_name=$1
+    local mapping_file="/tmp/s4_can_mapping.conf"
+    
+    if [ -f "$mapping_file" ]; then
+        grep "^${logical_name}=" "$mapping_file" | cut -d'=' -f2
+    else
+        echo "$logical_name"
+    fi
+}
+
 # ==================== init: 初始化硬件 ====================
 
 cmd_init() {
@@ -43,13 +137,13 @@ cmd_init() {
     
     # ZLG
     if lsusb 2>/dev/null | grep -iqE "zlg|usbcan"; then
-        if lsmod 2>/dev/null | grep -q "^gs_usb"; then
-            ok "ZLG (gs_usb) 驱动已加载"
+        if lsmod 2>/dev/null | grep -q "^usbcanfd"; then
+            ok "ZLG (usbcanfd) 驱动已加载"
         else
             warn "ZLG 设备检测到，但驱动未加载"
             if sudo -n true 2>/dev/null; then
-                info "正在加载 gs_usb 驱动..."
-                sudo modprobe gs_usb 2>/dev/null || warn "gs_usb 加载失败"
+                info "正在加载 usbcanfd 驱动..."
+                sudo modprobe usbcanfd 2>/dev/null || warn "usbcanfd 加载失败"
             fi
         fi
     fi
@@ -71,20 +165,10 @@ cmd_init() {
         # 加载基础模块
         sudo modprobe can can_raw can_dev 2>/dev/null || true
         
-        # 获取接口驱动类型的函数
-        get_driver() {
-            local iface=$1
-            if [ -L "/sys/class/net/$iface/device/driver" ]; then
-                readlink -f "/sys/class/net/$iface/device/driver" 2>/dev/null | xargs basename 2>/dev/null
-            else
-                echo "unknown"
-            fi
-        }
-        
         local configured=0
         for iface in $(ls /sys/class/net/ 2>/dev/null | grep -E "^can" | sort -V); do
             if sudo ip link show "$iface" &>/dev/null; then
-                local driver=$(get_driver "$iface")
+                local driver=$(get_can_driver "$iface")
                 local bitrate=500000
                 
                 # 根据驱动类型设置比特率
@@ -92,7 +176,7 @@ cmd_init() {
                     pcan|mttcan)
                         bitrate=500000  # PEAK 和 Jetson 内置 CAN @ 500K
                         ;;
-                    gs_usb|usbcanfd)
+                    usbcanfd)
                         bitrate=1000000 # ZLG CANFD @ 1M
                         ;;
                     *)
@@ -101,7 +185,16 @@ cmd_init() {
                 esac
                 
                 sudo ip link set "$iface" down 2>/dev/null || true
-                sudo ip link set "$iface" type can bitrate "$bitrate" 2>/dev/null || true
+                
+                # CANFD 设备需要特殊配置
+                if [ "$driver" == "usbcanfd" ]; then
+                    # ZLG CANFD: 仲裁比特率 1M + 数据比特率 5M + FD 模式
+                    sudo ip link set "$iface" type can bitrate 1000000 dbitrate 5000000 fd on 2>/dev/null || true
+                else
+                    # 普通 CAN 设备
+                    sudo ip link set "$iface" type can bitrate "$bitrate" 2>/dev/null || true
+                fi
+                
                 if sudo ip link set "$iface" up 2>/dev/null; then
                     local rate_m=$((bitrate / 1000))
                     ok "$iface @ ${rate_m}Kbps ($driver)"
@@ -115,6 +208,24 @@ cmd_init() {
         else
             echo ""
             ok "$configured 个 CAN 接口已就绪"
+        fi
+        
+        # 3. 检测并映射 CAN 设备
+        echo ""
+        info "检测 CAN 设备映射..."
+        
+        read can_agv can_fd <<< "$(detect_can_mapping)"
+        
+        if [ -n "$can_agv" ]; then
+            ok "can_agv (AGV)  -> $can_agv (PEAK PCAN-USB)"
+        else
+            warn "can_agv (AGV)  -> 未找到 PEAK 设备"
+        fi
+        
+        if [ -n "$can_fd" ]; then
+            ok "can_fd (WHJ)   -> $can_fd (ZLG CANFD)"
+        else
+            warn "can_fd (WHJ)   -> 未找到 ZLG 设备"
         fi
     fi
     
@@ -176,23 +287,33 @@ cmd_dev() {
     
     mkdir -p "$PID_DIR"
     
-    # 1. 找 CAN 接口
-    local can_iface=""
-    if [ -f /tmp/can_pcan.iface ]; then
-        can_iface=$(cat /tmp/can_pcan.iface)
-    else
-        for iface in $(ls /sys/class/net/ 2>/dev/null | grep -E "^can" | sort -V); do
-            if ip link show "$iface" 2>/dev/null | grep -q "state UP"; then
-                can_iface=$iface
-                break
-            fi
-        done
+    # 1. 找 CAN 接口（使用逻辑名映射）
+    local can_agv_iface=$(get_mapped_iface "can_agv")
+    local can_fd_iface=$(get_mapped_iface "can_fd")
+    
+    # 检查映射文件是否存在，不存在则尝试自动检测
+    if [ ! -f "/tmp/s4_can_mapping.conf" ]; then
+        warn "CAN 映射未配置，尝试自动检测..."
+        read can_agv can_fd <<< "$(detect_can_mapping)"
+        can_agv_iface="${can_agv:-can_agv}"
+        can_fd_iface="${can_fd:-can_fd}"
     fi
     
-    if [ -n "$can_iface" ]; then
-        ok "CAN: $can_iface"
+    # 验证接口是否存在
+    if ip link show "$can_agv_iface" &>/dev/null; then
+        local agv_driver=$(get_can_driver "$can_agv_iface")
+        ok "AGV CAN: $can_agv_iface ($agv_driver)"
     else
-        warn "No CAN found, run: sudo ./s4 init"
+        warn "AGV CAN ($can_agv_iface) 未找到，运行: sudo ./s4 init"
+        can_agv_iface="can_agv"
+    fi
+    
+    if ip link show "$can_fd_iface" &>/dev/null; then
+        local fd_driver=$(get_can_driver "$can_fd_iface")
+        ok "Device CAN: $can_fd_iface ($fd_driver)"
+    else
+        warn "Device CAN ($can_fd_iface) 未找到"
+        can_fd_iface="can_fd"
     fi
     
     # 2. 准备 Web Dashboard (agv_test_control.html 作为主页)
@@ -233,13 +354,13 @@ cmd_dev() {
     source install/setup.bash
     
     local mode="${1:-hw}"
-    local launch_args="sim:=false use_agv:=true use_teleop:=false use_whj:=false use_kinco:=false use_cameras:=false use_lidar:=false can_agv_interface:=${can_iface:-can0}"
+    local launch_args="sim:=false use_agv:=true use_teleop:=false use_whj:=false use_kinco:=false use_cameras:=false use_lidar:=false can_agv_interface:=$can_agv_iface can_devices_interface:=$can_fd_iface"
     
     if [ "$mode" == "sim" ]; then
         launch_args="sim:=true use_teleop:=false"
         info "Mode: Simulation"
     elif [ "$mode" == "teleop" ]; then
-        launch_args="sim:=false use_agv:=true use_teleop:=true can_agv_interface:=${can_iface:-can0}"
+        launch_args="sim:=false use_agv:=true use_teleop:=true can_agv_interface:=$can_agv_iface can_devices_interface:=$can_fd_iface"
         info "Mode: Hardware + Keyboard"
     else
         info "Mode: Hardware (AGV)"
@@ -277,8 +398,9 @@ cmd_dev() {
     echo ""
     echo -e "${G}════════════════════════════════════════════════════════${R}"
     echo ""
-    echo -e "  🎮 Control Panel: ${C}$url${R}"
-    echo -e "  📡 WebSocket:     ws://localhost:$ws_port"
+    echo -e "  🌐 Open in browser: ${C}http://localhost:$http_port${R}"
+    echo ""
+    echo -e "  📡 WebSocket (internal): ws://localhost:$ws_port"
     echo ""
     echo -e "  Use WASD or arrow keys to control AGV"
     echo -e "  Press Ctrl+C to stop"
@@ -333,13 +455,32 @@ cmd_status() {
     echo -e "${C}📊 Status${R}"
     echo ""
     
-    # CAN
+    # CAN 设备映射
+    echo "CAN Device Mapping:"
+    if [ -f "/tmp/s4_can_mapping.conf" ]; then
+        while IFS='=' read -r logical physical; do
+            [[ "$logical" == \#* ]] && continue
+            if ip link show "$physical" &>/dev/null; then
+                local state=$(ip -br link show "$physical" 2>/dev/null | awk '{print $2}')
+                local driver=$(get_can_driver "$physical")
+                [[ "$state" == *"UP"* ]] && echo -e "  ${G}●${R} $logical -> $physical ($driver)" || echo -e "  ${Y}●${R} $logical -> $physical ($driver) DOWN"
+            else
+                echo -e "  ${Y}●${R} $logical -> $physical (not found)"
+            fi
+        done < /tmp/s4_can_mapping.conf
+    else
+        echo "  未配置 (运行: sudo ./s4 init)"
+    fi
+    echo ""
+    
+    # CAN 接口详情
     echo "CAN Interfaces:"
     local found=0
     for iface in $(ls /sys/class/net/ 2>/dev/null | grep -E "^can" | sort -V); do
         if ip link show "$iface" &>/dev/null; then
             local state=$(ip -br link show "$iface" 2>/dev/null | awk '{print $2}')
-            [[ "$state" == *"UP"* ]] && echo -e "  ${G}●${R} $iface UP" || echo -e "  ${Y}●${R} $iface $state"
+            local driver=$(get_can_driver "$iface")
+            [[ "$state" == *"UP"* ]] && echo -e "  ${G}●${R} $iface UP ($driver)" || echo -e "  ${Y}●${R} $iface $state ($driver)"
             found=1
         fi
     done
@@ -378,9 +519,13 @@ cmd_help() {
     echo "  stop          Stop all services"
     echo "  status        Show status"
     echo ""
+    echo "CAN Device Mapping:"
+    echo "  can_agv   -> PEAK PCAN-USB (AGV)"
+    echo "  can_fd    -> ZLG CANFD (WHJ + Kinco)"
+    echo ""
     echo "Quick Start:"
     echo ""
-    echo "  1. sudo ./s4 init      # Setup hardware"
+    echo "  1. sudo ./s4 init      # Setup hardware & detect CAN"
     echo "  2. ./s4 build          # Build"
     echo "  3. ./s4 dev            # Start developing!"
     echo ""
