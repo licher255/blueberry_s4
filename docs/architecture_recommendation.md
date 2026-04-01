@@ -13,7 +13,7 @@
 | **FW-Max AGV** | 1 | ✅ 已有 | 低 | CAN 总线控制 |
 | **机械臂** | 2 | ✅ 通常支持 | 中 | RealMan 提供 ROS2 驱动 |
 | **RealMan 升降机构** | 1 | ✅ 通常支持 | 低 | 与机械臂同协议 |
-| **Kinco 伺服** | 1 | ⚠️ 需开发 | 中 | 需自定义 CAN 协议节点 |
+| **Kinco 伺服** | 1 | ✅ 已完成 | 中 | CANopen 协议 C++ 驱动 |
 | **Intel D405** | 7 | ✅ 官方支持 | 中 | realsense-ros 包 |
 | **Livox 激光雷达** | 1 | ✅ 官方支持 | 低 | livox_ros_driver2 |
 
