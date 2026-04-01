@@ -1,5 +1,7 @@
 # Blueberry S4 - 移动操作机器人
 
+**简体中文 | [English](./README_EN.md)**
+
 [![ROS2](https://img.shields.io/badge/ROS2-Humble-blue)](https://docs.ros.org/en/humble/)
 [![Python](https://img.shields.io/badge/Python-3.10-3776ab)](https://www.python.org/)
 [![C++](https://img.shields.io/badge/C++-17-00599c)](https://isocpp.org/)
