@@ -33,3 +33,24 @@ clash-for-linux-install/
 # YUHESEN-FW-MAX is now part of the main repo (was submodule)
 src/YUHESEN-FW-MAX/*.apk*
 src/YUHESEN-FW-MAX/*.doc
+
+# Driver build artifacts
+drivers/peak-linux-driver-*/driver/*.o
+drivers/peak-linux-driver-*/driver/*.ko
+drivers/peak-linux-driver-*/driver/*.mod
+drivers/peak-linux-driver-*/driver/*.mod.c
+drivers/peak-linux-driver-*/driver/*.cmd
+drivers/peak-linux-driver-*/driver/*.symvers
+drivers/peak-linux-driver-*/driver/*.order
+drivers/peak-linux-driver-*/driver/dkms.conf
+drivers/peak-linux-driver-*/driver/src/*.o
+drivers/peak-linux-driver-*/driver/src/*.cmd
+drivers/peak-linux-driver-*/lib/
+drivers/peak-linux-driver-*/libpcanbasic/**/out/
+drivers/peak-linux-driver-*/libpcanbasic/**/lib/
+drivers/peak-linux-driver-*/test/*test
+drivers/peak-linux-driver-*/test/*settings
+drivers/zlg_usbcanfd_*/.*.cmd
+drivers/zlg_usbcanfd_*/*.o
+drivers/zlg_usbcanfd_*/Module.symvers
+drivers/zlg_usbcanfd_*/modules.order

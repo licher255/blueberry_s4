@@ -2,12 +2,10 @@
 """
 S4 - 主启动文件
 启动所有硬件节点和算法
-支持动态CAN接口映射
 """
 
-import os
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, LogInfo
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, TextSubstitution
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -15,27 +13,8 @@ from launch_ros.substitutions import FindPackageShare
 from launch_ros.actions import Node
 
 
-def get_can_interface(driver_type, default_iface):
-    """从缓存文件读取CAN接口映射"""
-    cache_file = f"/tmp/can_{driver_type}.iface"
-    try:
-        if os.path.exists(cache_file):
-            with open(cache_file, 'r') as f:
-                iface = f.read().strip()
-                if iface:
-                    return iface
-    except Exception:
-        pass
-    return default_iface
-
-
 def generate_launch_description():
     """生成启动描述"""
-    
-    # ==================== 动态CAN接口检测 ====================
-    # 从 /tmp/can_*.iface 缓存文件读取接口映射
-    agv_can_iface = get_can_interface('pcan', 'can3')  # AGV使用pcan
-    devices_can_iface = get_can_interface('usbcanfd', 'can1')  # WHJ/Kinco使用usbcanfd
     
     # ==================== 启动参数 ====================
     
@@ -55,13 +34,13 @@ def generate_launch_description():
     
     use_whj_arg = DeclareLaunchArgument(
         'use_whj',
-        default_value='false',  # 默认禁用，需要硬件连接
+        default_value='true',
         description='Enable WHJ lifter'
     )
     
     use_kinco_arg = DeclareLaunchArgument(
         'use_kinco',
-        default_value='false',  # 默认禁用，需要硬件连接
+        default_value='true',
         description='Enable Kinco servo'
     )
     
@@ -77,17 +56,19 @@ def generate_launch_description():
         description='Enable Livox lidar'
     )
     
-    # CAN 接口配置（支持动态检测或手动覆盖）
+    # CAN 接口配置
+    # 使用逻辑名：can_agv (PEAK PCAN-USB for AGV), can_fd (ZLG CANFD for WHJ+Kinco)
+    # 实际映射由 s4 init 自动检测并写入 /tmp/s4_can_mapping.conf
     can_agv_arg = DeclareLaunchArgument(
         'can_agv_interface',
-        default_value=agv_can_iface,  # 动态检测或默认
-        description=f'CAN interface for AGV (detected: {agv_can_iface})'
+        default_value='can_agv',  # 逻辑名，指向 PEAK PCAN-USB
+        description='CAN interface for AGV (PEAK PCAN-USB)'
     )
     
     can_devices_arg = DeclareLaunchArgument(
         'can_devices_interface',
-        default_value=devices_can_iface,  # 动态检测或默认
-        description=f'CAN interface for other devices (detected: {devices_can_iface})'
+        default_value='can_fd',   # 逻辑名，指向 ZLG CANFD
+        description='CAN interface for WHJ+Kinco (ZLG CANFD)'
     )
     
     # ==================== 获取参数值 ====================
@@ -104,29 +85,30 @@ def generate_launch_description():
     # ==================== 节点定义 ====================
     
     # AGV 节点 (YUHESEN FW-Max) - 使用官方 C++ 驱动
+    # 注意：LaunchConfiguration 需要正确传递参数
     agv_node = Node(
         package='yhs_can_control',
         executable='yhs_can_control_node',
         name='agv_node',
         parameters=[{
-            'can_name': can_agv_interface,
+            'can_name': can_agv_interface,  # 动态检测的 CAN 接口
         }],
         condition=IfCondition(use_agv),
         output='screen',
     )
     
-    # WHJ 升降节点
-    whj_node = Node(
-        package='whj_can_control',
-        executable='whj_can_control_node',
-        name='whj_can_control_node',
-        parameters=[{
-            'can_name': can_devices_interface,
-            'canfd_enabled': True,
-        }],
-        condition=IfCondition(use_whj),
-        output='screen',
-    )
+    # WHJ 升降节点 (待开发)
+    # whj_node = Node(
+    #     package='realman_whj',
+    #     executable='whj_node',
+    #     name='whj_lifter',
+    #     parameters=[{
+    #         'can_interface': can_devices_interface,
+    #         'node_id': 7,
+    #     }],
+    #     condition=IfCondition(use_whj),
+    #     output='screen',
+    # )
     
     # Kinco 伺服节点 (待开发)
     # kinco_node = Node(
@@ -149,18 +131,19 @@ def generate_launch_description():
     )
     use_teleop = LaunchConfiguration('use_teleop')
     
-    # ==================== 日志信息 ====================
-    
-    log_can_info = LogInfo(
-        msg=f"[S4] CAN接口映射: AGV={agv_can_iface}, Devices={devices_can_iface}"
-    )
+    # 键盘遥控节点 (待适配官方驱动)
+    # teleop_node = Node(
+    #     package='fw_max_can',
+    #     executable='teleop_keyboard',
+    #     name='teleop_keyboard',
+    #     output='screen',
+    #     condition=IfCondition(use_teleop),
+    #     prefix='xterm -e',
+    # )
     
     # ==================== 组装启动描述 ====================
     
     ld = LaunchDescription([
-        # 日志
-        log_can_info,
-        
         # 参数声明
         sim_arg,
         use_agv_arg,
@@ -174,8 +157,9 @@ def generate_launch_description():
         
         # 节点
         agv_node,
-        whj_node,
+        # whj_node,  # 待开发
         # kinco_node,  # 待开发
+        # teleop_node,  # 待适配官方驱动
     ])
     
     return ld

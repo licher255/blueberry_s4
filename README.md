@@ -203,8 +203,8 @@ ros2 launch fw_max_bringup robot.launch.py
 # 方式 3: 仿真模式（无真实硬件）
 ros2 launch bringup robot.launch.py sim:=true
 
-# 方式 4: 指定 CAN 接口
-ros2 launch bringup robot.launch.py can_agv_interface:=can2
+# 方式 4: 指定 CAN 接口 (使用物理接口名)
+ros2 launch bringup robot.launch.py can_agv_interface:=can3 can_devices_interface:=can2
 ```
 
 ---
@@ -215,11 +215,13 @@ S4 项目支持多种 CAN 设备，系统会自动检测和配置。
 
 ### 支持的 CAN 设备
 
-| 设备类型 | 驱动 | 接口名 | 说明 |
-|---------|------|--------|------|
-| Jetson 内置 CAN | mttcan | can0/can1 | Jetson AGX Xavier 内置 |
-| PEAK USB-CAN | pcan | can2+ | PCAN-USB 适配器 |
-| 通用 USB-CAN | gs_usb | can2+ | CANable/CandleLight 等 |
+| 设备类型 | 驱动 | 逻辑名 | 物理接口 | 说明 |
+|---------|------|--------|----------|------|
+| Jetson 内置 CAN | mttcan | - | can0/can1 | Jetson AGX Xavier 内置 |
+| PEAK USB-CAN | pcan | **can_agv** | can2/can3 | AGV 底盘 (自动检测) |
+| ZLG CANFD | usbcanfd | **can_fd** | can2/can3 | WHJ + Kinco (自动检测) |
+
+> **注意**: USB-CAN 设备的物理接口名 (canX) 可能因启动顺序而变化，使用 `s4 init` 自动检测并映射到逻辑名。
 
 ### 快速命令
 
@@ -230,8 +232,12 @@ S4 项目支持多种 CAN 设备，系统会自动检测和配置。
 # 自动检测并配置所有 CAN 设备
 sudo ./scripts/s4 can auto
 
-# 配置指定 CAN 接口
-sudo ./scripts/s4 can setup can2 500000
+# 查看 CAN 设备映射
+./scripts/s4 status
+
+# 配置指定 CAN 接口 (如果需要手动配置)
+sudo ip link set can3 up type can bitrate 500000  # AGV
+sudo ip link set can2 up type can bitrate 1000000 dbitrate 5000000 fd on  # WHJ
 
 # 安装 PEAK USB-CAN 驱动（如需要）
 sudo ./scripts/s4 can install-driver
@@ -265,12 +271,12 @@ drivers/
 
 ```yaml
 can_interfaces:
-  - name: "can_agv"      # AGV: 煜禾森 FW-Max
-    device: "can0"
+  - name: "can_agv"      # AGV: 煜禾森 FW-Max (PEAK PCAN-USB)
+    device: "can_agv"    # 逻辑名，自动映射到实际 canX
     bitrate: 500000
     
-  - name: "can_devices"  # 其他设备: WHJ + Kinco
-    device: "can1"
+  - name: "can_fd"       # 其他设备: WHJ + Kinco (ZLG CANFD)
+    device: "can_fd"     # 逻辑名，自动映射到实际 canX
     bitrate: 1000000
     type: "canfd"
 ```
@@ -362,8 +368,7 @@ colcon build --symlink-install                    # 全编译
 colcon build --packages-select <包名> --symlink-install  # 单包
 
 # ========== 运行 ==========
-ros2 launch bringup robot.launch.py     # 启动完整系统
-ros2 launch bringup robot.launch.py --show-args  # 查看参数
+
 
 # ========== 调试 ==========
 ros2 topic list                    # 查看话题
@@ -412,3 +417,8 @@ ros2 param set /agv_node max_speed 1.5  # 设置参数
 ## 📄 许可证
 
 MIT License - 详见 [LICENSE](LICENSE)
+
+## 什么是对的开始
+1. CAN 驱动加载
+2. CAN2 pcan  -- can_agv
+3. CAN3 usbcanfd -- can_fd

@@ -1,265 +1,652 @@
 #!/bin/bash
-# Blueberry S4 - 两步启动 CLI
-# Step 1: sudo ./s4 init  (初始化 CAN)
-# Step 2: ./s4 dev        (启动 ROS2 + AGV + Web)
+# Blueberry S4 - 傻瓜化开发工具链
+# Usage: ./s4 [init|build|dev]
 
 set -e
 
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
-BLUE='\033[0;34m'; CYAN='\033[0;36m'; NC='\033[0m'
-
+# 路径
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-PID_FILE="/tmp/s4_pids"
+PID_DIR="/tmp/s4_pids"
 
-print() { echo -e "${BLUE}[S4]${NC} $1"; }
-ok() { echo -e "${GREEN}[S4]${NC} $1"; }
-warn() { echo -e "${YELLOW}[S4]${NC} $1"; }
-err() { echo -e "${RED}[S4]${NC} $1"; }
+# 颜色
+G='\033[0;32m'; Y='\033[1;33m'; C='\033[0;36m'; R='\033[0m'
+ok() { echo -e "${G}✓${R} $1"; }
+info() { echo -e "${C}•${R} $1"; }
+warn() { echo -e "${Y}!${R} $1"; }
 
-header() {
-    echo ""
-    echo -e "${CYAN}╔════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║${NC}           🫐 Blueberry S4 机器人平台                   ${CYAN}║${NC}"
-    echo -e "${CYAN}╚════════════════════════════════════════════════════════╝${NC}"
-    echo ""
+# ==================== Helper: 检测 CAN 驱动类型 ====================
+
+get_can_driver() {
+    local iface=$1
+    local driver="unknown"
+    
+    # 方法 1: 检查 ip -details link 输出 (最快，适用于 pcan/usbcanfd)
+    local details=$(ip -details link show "$iface" 2>/dev/null)
+    if echo "$details" | grep -q "pcan:"; then
+        echo "pcan"
+        return
+    fi
+    
+    # 方法 2: 检查 /proc/pcan 确认 pcan 设备
+    if [ -f "/proc/pcan" ]; then
+        if grep -q "$iface" /proc/pcan 2>/dev/null; then
+            echo "pcan"
+            return
+        fi
+    fi
+    
+    # 方法 3: 使用 sysfs symlink (适用于 mttcan, usbcanfd)
+    if [ -L "/sys/class/net/$iface/device/driver" ]; then
+        driver=$(readlink -f "/sys/class/net/$iface/device/driver" 2>/dev/null | xargs basename 2>/dev/null)
+        if [ -n "$driver" ]; then
+            echo "$driver"
+            return
+        fi
+    fi
+    
+    # 方法 4: 使用 ethtool (最后手段，可能卡住)
+    if command -v ethtool &>/dev/null; then
+        driver=$(timeout 1 ethtool -i "$iface" 2>/dev/null | grep "driver:" | awk '{print $2}')
+        if [ -n "$driver" ]; then
+            echo "$driver"
+            return
+        fi
+    fi
+    
+    echo "unknown"
 }
 
-check_ros2() {
-    [ -f "/opt/ros/humble/setup.bash" ] && source /opt/ros/humble/setup.bash
-    command -v ros2 &>/dev/null
-}
+# ==================== Helper: 检测并映射 CAN 设备 ====================
 
-get_agv_iface() {
-    # 动态检测 pcan 接口（实时，不依赖缓存文件）
-    for iface in $(ls /sys/class/net/ 2>/dev/null | grep -E '^can' | sort -V); do
-        if ip -details link show "$iface" 2>/dev/null | grep -q "pcan:"; then
-            echo "$iface"
-            return 0
+detect_can_mapping() {
+    # 清空之前的映射
+    local mapping_file="/tmp/s4_can_mapping.conf"
+    rm -f "$mapping_file"
+    
+    local can_agv=""
+    local can_fd=""
+    
+    # 遍历所有 CAN 接口
+    for iface in $(ls /sys/class/net/ 2>/dev/null | grep -E "^can" | sort -V); do
+        if ip link show "$iface" &>/dev/null; then
+            local driver=$(get_can_driver "$iface")
+            
+            case "$driver" in
+                pcan)
+                    # PEAK PCAN-USB -> AGV
+                    can_agv="$iface"
+                    ;;
+                usbcanfd)
+                    # ZLG CANFD -> WHJ + Kinco
+                    can_fd="$iface"
+                    ;;
+            esac
         fi
     done
-    # 如果检测失败，尝试缓存文件
-    if [ -f /tmp/can_pcan.iface ]; then
-        cat /tmp/can_pcan.iface
-        return 0
+    
+    # 保存映射到文件
+    if [ -n "$can_agv" ] || [ -n "$can_fd" ]; then
+        echo "# S4 CAN Device Mapping - Generated at $(date)" > "$mapping_file"
+        [ -n "$can_agv" ] && echo "can_agv=$can_agv" >> "$mapping_file"
+        [ -n "$can_fd" ] && echo "can_fd=$can_fd" >> "$mapping_file"
     fi
-    # 默认回退
-    echo "can3"
+    
+    # 输出结果
+    echo "$can_agv $can_fd"
 }
 
-has_driver_iface() {
-    local driver="$1"
-    for iface in $(ls /sys/class/net/ 2>/dev/null | grep -E '^can' | sort -V); do
-        if ip -details link show "$iface" 2>/dev/null | grep -q "${driver}:"; then
-            return 0
-        fi
-    done
-    return 1
-}
+# ==================== Helper: 获取映射的接口 ====================
 
-save_pid() {
-    echo $1 >> "$PID_FILE"
-}
-
-cleanup() {
-    print "正在停止所有服务..."
-    if [ -f "$PID_FILE" ]; then
-        while read pid; do
-            kill $pid 2>/dev/null || true
-        done < "$PID_FILE"
-        rm -f "$PID_FILE"
+get_mapped_iface() {
+    local logical_name=$1
+    local mapping_file="/tmp/s4_can_mapping.conf"
+    
+    if [ -f "$mapping_file" ]; then
+        grep "^${logical_name}=" "$mapping_file" | cut -d'=' -f2
+    else
+        echo "$logical_name"
     fi
-    pkill -f "ros2 launch bringup" 2>/dev/null || true
-    pkill -f "rosbridge_server" 2>/dev/null || true
-    ok "已停止"
 }
 
-# ============ 核心命令 ============
+# ==================== init: 初始化硬件 ====================
 
 cmd_init() {
-    header
+    echo ""
+    echo -e "${C}╔════════════════════════════════════════════════════════╗${R}"
+    echo -e "${C}║${R}           🫐 Blueberry S4 - 初始化                    ${C}║${R}"
+    echo -e "${C}╚════════════════════════════════════════════════════════╝${R}"
+    echo ""
     
-    if [ "$EUID" -ne 0 ]; then
-        err "需要 root: sudo ./s4 init"
-        exit 1
+    # 1. 检查驱动
+    info "检查 CAN 驱动..."
+    
+    # PEAK
+    if lsusb 2>/dev/null | grep -q "0c72:"; then
+        if lsmod 2>/dev/null | grep -q "^pcan"; then
+            ok "PEAK (pcan) 驱动已加载"
+        else
+            warn "PEAK 设备检测到，但驱动未加载"
+            info "正在加载 pcan 驱动..."
+            sudo modprobe pcan 2>/dev/null || {
+                warn "需要编译安装 PEAK 驱动"
+                echo "  运行: sudo $SCRIPT_DIR/can_manager.sh install-driver"
+            }
+        fi
     fi
     
-    print "╔═══════════════════════════════════════════════════════╗"
-    print "║  步骤 1: 初始化 CAN 设备                               ║"
-    print "╚═══════════════════════════════════════════════════════╝"
-    
-    python3 "$SCRIPT_DIR/can_initializer.py"
-    
-    if ! has_driver_iface "pcan" || ! has_driver_iface "usbcanfd"; then
-        err "CAN 初始化失败"
-        exit 1
+    # ZLG
+    if lsusb 2>/dev/null | grep -iqE "zlg|usbcan"; then
+        if lsmod 2>/dev/null | grep -q "^usbcanfd"; then
+            ok "ZLG (usbcanfd) 驱动已加载"
+        else
+            warn "ZLG 设备检测到，但驱动未加载"
+            if sudo -n true 2>/dev/null; then
+                info "正在加载 usbcanfd 驱动..."
+                sudo modprobe usbcanfd 2>/dev/null || warn "usbcanfd 加载失败"
+            fi
+        fi
     fi
     
+    # 2. 配置 CAN 接口
     echo ""
-    ok "✅ CAN 初始化完成"
-    ok "AGV 接口: $(get_agv_iface) (pcan)"
-    ok "WHJ 接口: $(cat /tmp/can_usbcanfd.iface 2>/dev/null || echo 'can?') (usbcanfd)"
-    echo ""
-    ok "下一步:  ./scripts/s4 dev  (启动 ROS2 + AGV + Web)"
-    echo ""
-}
-
-cmd_dev() {
-    local mode="${1:-hw}"
-    header
+    info "配置 CAN 接口..."
     
-    # 检查 CAN 是否已初始化
-    if ! has_driver_iface "pcan"; then
-        err "CAN 未初始化"
-        print "请先运行: sudo ./s4 init"
-        exit 1
+    # 检查是否有 sudo 权限
+    local has_sudo=false
+    if sudo -n true 2>/dev/null; then
+        has_sudo=true
     fi
     
-    # 检查 ROS2
-    print "[1/3] 检查 ROS2..."
-    if ! check_ros2; then
-        err "ROS2 未安装"
-        exit 1
-    fi
-    
-    if [ ! -d "$PROJECT_DIR/install" ]; then
-        err "工作空间未编译"
-        print "运行: ./s4 build"
-        exit 1
-    fi
-    ok "ROS2 就绪"
-    
-    # 清理之前的状态
-    rm -f "$PID_FILE"
-    trap cleanup EXIT INT TERM
-    
-    source /opt/ros/humble/setup.bash
-    source "$PROJECT_DIR/install/setup.bash"
-    
-    # 启动 AGV
-    print "[2/3] 启动 ROS2 + AGV..."
-    local agv_iface=$(get_agv_iface)
-    ok "检测到 AGV 接口: $agv_iface (pcan)"
-    
-    ros2 launch bringup robot.launch.py can_agv_interface:=$agv_iface &
-    save_pid $!
-    sleep 5
-    
-    if ! pgrep -f "ros2 launch bringup" > /dev/null; then
-        err "AGV 启动失败"
-        exit 1
-    fi
-    ok "AGV 已启动"
-    
-    # 启动 Web
-    print "[3/3] 启动 Web Dashboard..."
-    IP=$(hostname -I | awk '{print $1}')
-    
-    # rosbridge_server
-    if ros2 pkg list 2>/dev/null | grep -q rosbridge_server; then
-        ros2 launch rosbridge_server rosbridge_websocket_launch.xml port:=9091 &
-        save_pid $!
-        sleep 2
-    fi
-    
-    # HTTP 服务器
-    cd "$PROJECT_DIR/web_dashboard"
-    python3 -m http.server 8080 &
-    save_pid $!
-    sleep 1
-    
-    echo ""
-    print "╔═══════════════════════════════════════════════════════╗"
-    print "║  ✅ 系统启动完成！                                     ║"
-    print "╚═══════════════════════════════════════════════════════╝"
-    echo ""
-    ok "🌐 访问地址:"
-    ok "   AGV 控制: http://$IP:8080/agv_test_control.html"
-    ok "   主页:     http://$IP:8080"
-    ok "   WebSocket: ws://$IP:9091"
-    echo ""
-    ok "按 Ctrl+C 停止所有服务"
-    wait
-}
-
-cmd_check() {
-    header
-    print "系统状态检查"
-    echo ""
-    
-    check_ros2 && ok "ROS2 Humble" || err "ROS2 未安装"
-    [ -d "$PROJECT_DIR/install" ] && ok "工作空间已编译" || warn "未编译"
-    
-    echo ""
-    print "CAN 接口:"
-    for iface in $(ls /sys/class/net/ 2>/dev/null | grep -E '^can' | sort -V); do
-        driver=$(ip -details link show "$iface" 2>/dev/null | grep -oE "(pcan|usbcanfd|mttcan)" | head -1)
-        state=$(ip -br link show "$iface" 2>/dev/null | awk '{print $2}')
-        echo "  $iface: $state ($driver)"
-    done
-    
-    if [ -f /tmp/can_pcan.iface ]; then
+    if [ "$has_sudo" = false ]; then
+        warn "需要 sudo 权限配置 CAN"
+        echo "  请运行: sudo ./s4 init"
+    else
+        # 加载基础模块
+        sudo modprobe can can_raw can_dev 2>/dev/null || true
+        
+        local configured=0
+        for iface in $(ls /sys/class/net/ 2>/dev/null | grep -E "^can" | sort -V); do
+            if sudo ip link show "$iface" &>/dev/null; then
+                local driver=$(get_can_driver "$iface")
+                local bitrate=500000
+                
+                # 根据驱动类型设置比特率
+                case "$driver" in
+                    pcan|mttcan)
+                        bitrate=500000  # PEAK 和 Jetson 内置 CAN @ 500K
+                        ;;
+                    usbcanfd)
+                        bitrate=1000000 # ZLG CANFD @ 1M
+                        ;;
+                    *)
+                        bitrate=500000  # 默认 500K
+                        ;;
+                esac
+                
+                sudo ip link set "$iface" down 2>/dev/null || true
+                
+                # CANFD 设备需要特殊配置
+                if [ "$driver" == "usbcanfd" ]; then
+                    # ZLG CANFD: 仲裁比特率 1M + 数据比特率 5M + FD 模式
+                    sudo ip link set "$iface" type can bitrate 1000000 dbitrate 5000000 fd on 2>/dev/null || true
+                else
+                    # 普通 CAN 设备
+                    sudo ip link set "$iface" type can bitrate "$bitrate" 2>/dev/null || true
+                fi
+                
+                if sudo ip link set "$iface" up 2>/dev/null; then
+                    local rate_m=$((bitrate / 1000))
+                    ok "$iface @ ${rate_m}Kbps ($driver)"
+                    configured=$((configured + 1))
+                fi
+            fi
+        done
+        
+        if [ $configured -eq 0 ]; then
+            warn "未配置任何 CAN 接口，请检查硬件连接"
+        else
+            echo ""
+            ok "$configured 个 CAN 接口已就绪"
+        fi
+        
+        # 3. 检测并映射 CAN 设备
         echo ""
-        ok "AGV -> $(cat /tmp/can_pcan.iface) (pcan)"
-        ok "WHJ -> $(cat /tmp/can_usbcanfd.iface) (usbcanfd)"
+        info "检测 CAN 设备映射..."
+        
+        read can_agv can_fd <<< "$(detect_can_mapping)"
+        
+        if [ -n "$can_agv" ]; then
+            ok "can_agv (AGV)  -> $can_agv (PEAK PCAN-USB)"
+        else
+            warn "can_agv (AGV)  -> 未找到 PEAK 设备"
+        fi
+        
+        if [ -n "$can_fd" ]; then
+            ok "can_fd (WHJ)   -> $can_fd (ZLG CANFD)"
+        else
+            warn "can_fd (WHJ)   -> 未找到 ZLG 设备"
+        fi
     fi
-    
-    echo ""
-    pgrep -f "ros2 launch bringup" >/dev/null && ok "AGV 运行中" || warn "AGV 未运行"
     
     echo ""
 }
 
-cmd_stop() {
-    header
-    cleanup
-}
+# ==================== build: 编译 ====================
 
 cmd_build() {
-    header
-    check_ros2 || { err "ROS2 未安装"; exit 1; }
+    echo ""
+    echo -e "${C}🔨 Building Blueberry S4...${R}"
+    echo ""
+    
+    # 检查 ROS2
+    if [ -f "/opt/ros/humble/setup.bash" ]; then
+        source /opt/ros/humble/setup.bash
+    elif ! command -v ros2 &>/dev/null; then
+        echo "ROS2 not found!"
+        exit 1
+    fi
+    
     cd "$PROJECT_DIR"
     
+    # 清理
     if [ "$1" == "clean" ]; then
-        warn "清理..."
+        info "Cleaning..."
         rm -rf build install log
     fi
     
-    print "编译中..."
-    colcon build --symlink-install "$@"
-    ok "编译完成"
+    # 依赖
+    info "Installing dependencies..."
+    rosdep install --from-paths src --ignore-src -y 2>/dev/null || true
+    
+    # 编译
+    info "Building..."
+    if colcon build --symlink-install "$@" 2>&1 | grep -E "Finished|Summary"; then
+        echo ""
+        ok "Build successful!"
+    else
+        echo ""
+        warn "Build completed with warnings"
+    fi
+    
+    echo ""
 }
+
+# ==================== dev: 启动开发环境 ====================
+
+cmd_dev() {
+    echo ""
+    echo -e "${C}🚀 Starting Blueberry S4...${R}"
+    echo ""
+    
+    # 检查环境
+    if [ ! -d "$PROJECT_DIR/install" ]; then
+        echo "Not compiled yet. Run: ./s4 build"
+        exit 1
+    fi
+    
+    mkdir -p "$PID_DIR"
+    
+    # 1. 找 CAN 接口（使用逻辑名映射）
+    local can_agv_iface=$(get_mapped_iface "can_agv")
+    local can_fd_iface=$(get_mapped_iface "can_fd")
+    
+    # 检查映射文件是否存在，不存在则尝试自动检测
+    if [ ! -f "/tmp/s4_can_mapping.conf" ]; then
+        warn "CAN 映射未配置，尝试自动检测..."
+        read can_agv can_fd <<< "$(detect_can_mapping)"
+        can_agv_iface="${can_agv:-can_agv}"
+        can_fd_iface="${can_fd:-can_fd}"
+    fi
+    
+    # 验证接口是否存在
+    if ip link show "$can_agv_iface" &>/dev/null; then
+        local agv_driver=$(get_can_driver "$can_agv_iface")
+        ok "AGV CAN: $can_agv_iface ($agv_driver)"
+    else
+        warn "AGV CAN ($can_agv_iface) 未找到，运行: sudo ./s4 init"
+        can_agv_iface="can_agv"
+    fi
+    
+    if ip link show "$can_fd_iface" &>/dev/null; then
+        local fd_driver=$(get_can_driver "$can_fd_iface")
+        ok "Device CAN: $can_fd_iface ($fd_driver)"
+    else
+        warn "Device CAN ($can_fd_iface) 未找到"
+        can_fd_iface="can_fd"
+    fi
+    
+    # 2. 准备 Web Dashboard (s4_dashboard.html 作为主页)
+    info "Setting up web dashboard..."
+    cd "$PROJECT_DIR/web_dashboard"
+    
+    # 备份原 index.html
+    if [ ! -f "index.html.s4backup" ] && [ -f "index.html" ]; then
+        cp index.html index.html.s4backup
+    fi
+    
+    # 使用 s4_dashboard.html 作为主页 (AGV + WHJ 综合控制)
+    if [ -f "s4_dashboard.html" ]; then
+        cp s4_dashboard.html index.html
+    elif [ -f "agv_test_control.html" ]; then
+        cp agv_test_control.html index.html
+    fi
+    
+    # 找可用端口
+    local http_port=8080
+    while ss -tlnp 2>/dev/null | grep -q ":$http_port "; do
+        http_port=$((http_port + 1))
+    done
+    
+    local ws_port=9091
+    while ss -tlnp 2>/dev/null | grep -q ":$ws_port "; do
+        ws_port=$((ws_port + 1))
+    done
+    
+    # 3. 启动 Web 服务器
+    python3 -m http.server "$http_port" > /dev/null 2>&1 &
+    echo $! > "$PID_DIR/http.pid"
+    echo $http_port > "$PID_DIR/http.port"
+    sleep 1
+    ok "Web server on port $http_port"
+    
+    # 4. 启动 ROS2
+    info "Starting ROS2..."
+    cd "$PROJECT_DIR"
+    source install/setup.bash
+    
+    local mode="${1:-hw}"
+    local launch_args="sim:=false use_agv:=true use_teleop:=false use_whj:=false use_kinco:=false use_cameras:=false use_lidar:=false can_agv_interface:=$can_agv_iface can_devices_interface:=$can_fd_iface"
+    
+    if [ "$mode" == "sim" ]; then
+        launch_args="sim:=true use_teleop:=false"
+        info "Mode: Simulation"
+    elif [ "$mode" == "teleop" ]; then
+        launch_args="sim:=false use_agv:=true use_teleop:=true can_agv_interface:=$can_agv_iface can_devices_interface:=$can_fd_iface"
+        info "Mode: Hardware + Keyboard"
+    else
+        info "Mode: Hardware (AGV)"
+    fi
+    
+    ros2 launch bringup robot.launch.py $launch_args > /tmp/s4_ros2.log 2>&1 &
+    local agv_pid=$!
+    echo $agv_pid > "$PID_DIR/agv.pid"
+    
+    sleep 3
+    if ! ps -p $agv_pid > /dev/null 2>&1; then
+        echo "AGV failed to start! Check: tail -f /tmp/s4_ros2.log"
+        exit 1
+    fi
+    ok "AGV started"
+    
+    # 5. 启动 WHJ 节点 (Python版本，带轨迹规划)
+    info "Starting WHJ node..."
+    ros2 run whj_can_py whj_can_node \
+        --ros-args \
+        -p can_interface:=$can_fd_iface \
+        -p motor_id:=7 \
+        -p max_velocity:=800.0 \
+        -p max_acceleration:=1500.0 > /tmp/s4_whj.log 2>&1 &
+    local whj_pid=$!
+    echo $whj_pid > "$PID_DIR/whj.pid"
+    
+    sleep 3
+    if ps -p $whj_pid > /dev/null 2>&1; then
+        ok "WHJ started (with trajectory planning)"
+    else
+        warn "WHJ failed to start! Check: tail -f /tmp/s4_whj.log"
+    fi
+    
+    # 5.5 启动 Kinco 节点 (旋转电机，与 AGV 共享 can3)
+    info "Starting Kinco node (rotation motor)..."
+    ros2 run kinco_can_control kinco_can_control_node \
+        --ros-args \
+        -p can_name:=$can_agv_iface \
+        -p node_id:=1 \
+        -p state_publish_rate:=10.0 > /tmp/s4_kinco.log 2>&1 &
+    local kinco_pid=$!
+    echo $kinco_pid > "$PID_DIR/kinco.pid"
+    
+    sleep 2
+    if ps -p $kinco_pid > /dev/null 2>&1; then
+        ok "Kinco started on $can_agv_iface"
+    else
+        warn "Kinco failed to start! Check: tail -f /tmp/s4_kinco.log"
+    fi
+    
+    # 6. 启动 Rosbridge
+    ros2 launch rosbridge_server rosbridge_websocket_launch.xml port:=$ws_port > /dev/null 2>&1 &
+    echo $! > "$PID_DIR/rosbridge.pid"
+    echo $ws_port > "$PID_DIR/rosbridge.port"
+    sleep 1
+    ok "Rosbridge on port $ws_port"
+    
+    # 6. 打开浏览器
+    local url="http://localhost:$http_port"
+    info "Opening browser..."
+    
+    if command -v xdg-open &>/dev/null; then
+        xdg-open "$url" 2>/dev/null || true
+    elif command -v gnome-open &>/dev/null; then
+        gnome-open "$url" 2>/dev/null || true
+    fi
+    
+    # 显示信息
+    echo ""
+    echo -e "${G}════════════════════════════════════════════════════════${R}"
+    echo ""
+    echo -e "  🌐 Open in browser: ${C}http://localhost:$http_port${R}"
+    echo ""
+    echo -e "  📡 WebSocket (internal): ws://localhost:$ws_port"
+    echo ""
+    echo -e "  🎮 AGV: Use WASD or arrow keys to control"
+    echo -e "  🔧 WHJ: Enable → Set target position → Move (with trajectory planning)"
+    echo -e "  📊 Check web dashboard for real-time status"
+    echo ""
+    echo -e "  Press Ctrl+C to stop"
+    echo ""
+    echo -e "${G}════════════════════════════════════════════════════════${R}"
+    
+    # 清理
+    cleanup() {
+        echo ""
+        info "Stopping..."
+        
+        # 尝试直接发送CAN帧禁用电机（优雅关闭）
+        # 从映射文件读取，避免重新检测
+        local mapping_file="/tmp/s4_can_mapping.conf"
+        local can_agv=""
+        local can_fd=""
+        
+        if [ -f "$mapping_file" ]; then
+            source "$mapping_file" 2>/dev/null || true
+        fi
+        
+        # WHJ禁用: CAN ID 0x07, 数据 [0x02, 0x0A, 0x00, 0x00]
+        # Kinco禁用: CAN ID 0x201, 数据 [0x01, 0x06, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00]
+        if [ -n "$can_fd" ] && ip link show "$can_fd" &>/dev/null; then
+            info "Disabling WHJ motor..."
+            cansend "$can_fd" 007#020A0000 2>/dev/null || true
+            sleep 0.05
+        fi
+        if [ -n "$can_agv" ] && ip link show "$can_agv" &>/dev/null; then
+            info "Disabling Kinco motor..."
+            cansend "$can_agv" 201#0106100000000000 2>/dev/null || true
+            sleep 0.05
+        fi
+        
+        # 停止所有进程
+        for f in "$PID_DIR"/*.pid; do
+            [ -f "$f" ] && kill $(cat "$f" 2>/dev/null) 2>/dev/null; rm -f "$f"
+        done
+        
+        # 强制终止所有相关进程
+        pkill -9 -f "ros2 launch bringup" 2>/dev/null || true
+        pkill -9 -f "rosbridge" 2>/dev/null || true
+        pkill -9 -f "http.server.*8" 2>/dev/null || true
+        pkill -9 -f "whj_can_node" 2>/dev/null || true
+        pkill -9 -f "kinco_can_control_node" 2>/dev/null || true
+        
+        # 恢复原始 index.html
+        if [ -f "$PROJECT_DIR/web_dashboard/index.html.s4backup" ]; then
+            mv "$PROJECT_DIR/web_dashboard/index.html.s4backup" "$PROJECT_DIR/web_dashboard/index.html"
+        fi
+        
+        ok "Stopped"
+    }
+    
+    trap cleanup SIGINT SIGTERM
+    
+    # 等待
+    while ps -p $agv_pid > /dev/null 2>&1; do sleep 1; done
+    warn "AGV exited"
+    cleanup
+}
+
+# ==================== stop ====================
+
+cmd_stop() {
+    info "Stopping..."
+    
+    # 尝试直接发送CAN帧禁用电机
+    local mapping_file="/tmp/s4_can_mapping.conf"
+    local can_agv=""
+    local can_fd=""
+    
+    if [ -f "$mapping_file" ]; then
+        source "$mapping_file" 2>/dev/null || true
+    fi
+    
+    # WHJ禁用: CAN ID 0x07, 数据 [0x02, 0x0A, 0x00, 0x00]
+    # Kinco禁用: CAN ID 0x201, 数据 [0x01, 0x06, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00]
+    if [ -n "$can_fd" ] && ip link show "$can_fd" &>/dev/null; then
+        info "Disabling WHJ motor..."
+        cansend "$can_fd" 007#020A0000 2>/dev/null || true
+        sleep 0.05
+    fi
+    if [ -n "$can_agv" ] && ip link show "$can_agv" &>/dev/null; then
+        info "Disabling Kinco motor..."
+        cansend "$can_agv" 201#0106100000000000 2>/dev/null || true
+        sleep 0.05
+    fi
+    
+    [ -d "$PID_DIR" ] && for f in "$PID_DIR"/*.pid; do
+        [ -f "$f" ] && kill $(cat "$f" 2>/dev/null) 2>/dev/null; rm -f "$f"
+    done
+    
+    # Kill processes more aggressively to avoid blocking
+    pkill -9 -f "ros2 launch bringup" 2>/dev/null || true
+    pkill -9 -f "rosbridge" 2>/dev/null || true
+    pkill -9 -f "http.server.*8" 2>/dev/null || true
+    pkill -9 -f "whj_can_node" 2>/dev/null || true
+    pkill -9 -f "kinco_can_control_node" 2>/dev/null || true
+    
+    if [ -f "$PROJECT_DIR/web_dashboard/index.html.s4backup" ]; then
+        mv "$PROJECT_DIR/web_dashboard/index.html.s4backup" "$PROJECT_DIR/web_dashboard/index.html"
+    fi
+    
+    ok "Stopped"
+}
+
+# ==================== status ====================
+
+cmd_status() {
+    echo ""
+    echo -e "${C}📊 Status${R}"
+    echo ""
+    
+    # CAN 设备映射
+    echo "CAN Device Mapping:"
+    if [ -f "/tmp/s4_can_mapping.conf" ]; then
+        while IFS='=' read -r logical physical; do
+            [[ "$logical" == \#* ]] && continue
+            if ip link show "$physical" &>/dev/null; then
+                local state=$(ip -br link show "$physical" 2>/dev/null | awk '{print $2}')
+                local driver=$(get_can_driver "$physical")
+                [[ "$state" == *"UP"* ]] && echo -e "  ${G}●${R} $logical -> $physical ($driver)" || echo -e "  ${Y}●${R} $logical -> $physical ($driver) DOWN"
+            else
+                echo -e "  ${Y}●${R} $logical -> $physical (not found)"
+            fi
+        done < /tmp/s4_can_mapping.conf
+    else
+        echo "  未配置 (运行: sudo ./s4 init)"
+    fi
+    echo ""
+    
+    # CAN 接口详情
+    echo "CAN Interfaces:"
+    local found=0
+    for iface in $(ls /sys/class/net/ 2>/dev/null | grep -E "^can" | sort -V); do
+        if ip link show "$iface" &>/dev/null; then
+            local state=$(ip -br link show "$iface" 2>/dev/null | awk '{print $2}')
+            local driver=$(get_can_driver "$iface")
+            [[ "$state" == *"UP"* ]] && echo -e "  ${G}●${R} $iface UP ($driver)" || echo -e "  ${Y}●${R} $iface $state ($driver)"
+            found=1
+        fi
+    done
+    [ $found -eq 0 ] && echo "  None"
+    echo ""
+    
+    # Services
+    echo "Services:"
+    pgrep -f "ros2 launch bringup" > /dev/null && echo -e "  ${G}●${R} AGV"
+    pgrep -f "whj_can_node" > /dev/null && echo -e "  ${G}●${R} WHJ (with trajectory planning)"
+    pgrep -f "kinco_can_control_node" > /dev/null && echo -e "  ${G}●${R} Kinco (rotation motor)"
+    pgrep -f "rosbridge" > /dev/null && echo -e "  ${G}●${R} Rosbridge"
+    pgrep -f "http.server" > /dev/null && echo -e "  ${G}●${R} Web ($(cat "$PID_DIR/http.port" 2>/dev/null || echo 8080))"
+    echo ""
+    
+    # Build
+    echo "Workspace:"
+    [ -d "$PROJECT_DIR/install" ] && echo -e "  ${G}●${R} Compiled" || echo -e "  ${Y}●${R} Not compiled"
+    echo ""
+}
+
+# ==================== help ====================
 
 cmd_help() {
-    header
-    cat << 'EOF'
-Blueberry S4 - 两步启动
-
-使用方法:
-
-  步骤 1: 初始化 CAN (需要 root)
-    $ sudo ./scripts/s4 init 
-
-  步骤 2: 启动 ROS2 + AGV + Web
-    $ ./scripts/s4 dev   
-
-  然后浏览器访问显示的地址
-
-其他命令:
-  ./s4 check      检查系统状态
-  ./s4 stop       停止所有服务
-  ./s4 build      编译工作空间
-
-EOF
+    echo ""
+    echo -e "${C}🫐 Blueberry S4${R} - Robot Dev Toolkit"
+    echo ""
+    echo "Usage: ./s4 <command>"
+    echo ""
+    echo "Commands:"
+    echo ""
+    echo "  init          Initialize CAN hardware (needs sudo)"
+    echo "  build         Build the workspace"
+    echo "  build clean   Clean build"
+    echo "  dev           Start dev environment (AGV + WHJ + Web Dashboard)"
+    echo "  dev sim       Simulation mode"
+    echo "  dev teleop    With keyboard control"
+    echo "  stop          Stop all services"
+    echo "  status        Show status"
+    echo ""
+    echo "CAN Device Mapping:"
+    echo "  can_agv   -> PEAK PCAN-USB (AGV)"
+    echo "  can_fd    -> ZLG CANFD (WHJ + Kinco)"
+    echo ""
+    echo "Quick Start:"
+    echo ""
+    echo "  1. sudo ./s4 init      # Setup hardware & detect CAN"
+    echo "  2. ./s4 build          # Build"
+    echo "  3. ./s4 dev            # Start developing!"
+    echo ""
 }
 
-cd "$PROJECT_DIR" 2>/dev/null || true
+# ==================== main ====================
 
-case "${1:-help}" in
-    init)   cmd_init ;;
-    dev)    shift; cmd_dev "$@" ;;
-    check)  cmd_check ;;
-    stop)   cmd_stop ;;
-    build)  shift; cmd_build "$@" ;;
-    help|*) cmd_help ;;
-esac
+main() {
+    cd "$PROJECT_DIR" 2>/dev/null || true
+    
+    case "${1:-help}" in
+        init) cmd_init ;;
+        build) shift; cmd_build "$@" ;;
+        dev) shift; cmd_dev "$@" ;;
+        stop) cmd_stop ;;
+        status) cmd_status ;;
+        help|-h|--help) cmd_help ;;
+        *) echo "Unknown: $1"; echo "Run: ./s4 help"; exit 1 ;;
+    esac
+}
+
+main "$@"

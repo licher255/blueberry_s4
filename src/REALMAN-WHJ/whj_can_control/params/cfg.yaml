@@ -1,0 +1,7 @@
+whj_can_control_node:
+  ros__parameters:
+    can_name: "can_fd"
+    motor_id: 7
+    state_publish_rate: 10.0
+    timeout_ms: 1500
+    retry_count: 5
