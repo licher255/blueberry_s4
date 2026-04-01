@@ -4,18 +4,22 @@
 
 ## Project Overview
 
-**Blueberry S4** is a mobile manipulation robot project based on ROS2 Humble. It integrates:
+**Blueberry S4** is a mobile manipulation robot project based on ROS2 Humble. It integrates multiple hardware components for autonomous mobile manipulation tasks.
 
-- **Chassis**: YUHESEN FW-Max AGV (4-wheel steering mobile robot)
-- **Lifter**: RealMan WHJ lifting mechanism
-- **Servo**: Kinco servo system
-- **Vision**: 7× Intel RealSense D405 depth cameras
-- **Lidar**: Livox Mid-360 LiDAR
-- **Platform**: NVIDIA Jetson (Ubuntu 22.04)
+### Hardware Components
 
-### Project Type
+| Component | Manufacturer | Model | Interface | Protocol | Status |
+|-----------|--------------|-------|-----------|----------|--------|
+| AGV Chassis | YUHESEN | FW-Max | CAN 2.0 | Custom | ✅ Active |
+| Lifter | RealMan | WHJ | CAN-FD | CANopen | ✅ Active |
+| Servo | Kinco | FD1X5 | CAN-FD | CANopen | ✅ Active |
+| Cameras | Intel | RealSense D405×7 | USB 3.0 | - | ⏳ Planned |
+| LiDAR | Livox | Mid-360 | Ethernet | - | ⏳ Planned |
+
+### Platform
 - **Framework**: ROS2 Humble
-- **Language**: Python 3.10 + C++
+- **OS**: Ubuntu 22.04 (Jetson)
+- **Languages**: Python 3.10, C++17
 - **Build Tool**: colcon
 - **License**: MIT
 
@@ -27,35 +31,78 @@
 Blueberry_s4/                    # ROS2 Workspace Root
 ├── src/                         # Source Code
 │   ├── bringup/                 # Main launch package (entry point)
-│   ├── hardware/                # Hardware abstraction layer (placeholder)
-│   ├── navigation/              # Navigation algorithms (placeholder)
-│   ├── perception/              # Perception algorithms (placeholder)
-│   ├── YUHESEN-FW-MAX/          # Third-party: YUHESEN official driver
+│   │   ├── launch/
+│   │   │   └── robot.launch.py      # Main launch file
+│   │   ├── config/
+│   │   │   ├── robot.yaml           # Robot parameters
+│   │   │   └── s4.rviz              # RViz configuration
+│   │   └── test/                    # Unit tests
+│   │
+│   ├── YUHESEN-FW-MAX/          # Third-party AGV driver
 │   │   ├── yhs_can_control/     # AGV CAN control node (C++)
+│   │   │   ├── src/yhs_can_control_node.cpp
+│   │   │   └── params/cfg.yaml
 │   │   └── yhs_can_interfaces/  # AGV message definitions
-│   └── YUHESEN-FW-MAX.bak/      # Backup of old driver version
-│
-├── drivers/                     # CAN Driver Source Code
-│   └── peak-linux-driver-8.18.0/# PEAK USB-CAN driver source
+│   │       └── msg/
+│   │           ├── CtrlCmd.msg
+│   │           ├── CtrlFb.msg
+│   │           ├── IoCmd.msg
+│   │           └── ...
+│   │
+│   ├── REALMAN-WHJ/             # WHJ lifter drivers
+│   │   ├── whj_can_py/          # WHJ Python driver (ACTIVE)
+│   │   │   ├── whj_can_py/whj_can_node.py
+│   │   │   ├── core/
+│   │   │   │   ├── socketcan_driver.py
+│   │   │   │   ├── zlgcan_driver.py
+│   │   │   │   └── protocol/whj_protocol.py
+│   │   │   └── drivers/
+│   │   │       ├── whj_driver.py
+│   │   │       └── whj_motor_control.py
+│   │   ├── whj_can_control/     # WHJ C++ driver (alternative)
+│   │   └── whj_can_interfaces/  # WHJ message definitions
+│   │       └── msg/
+│   │           ├── WhjCmd.msg
+│   │           └── WhjState.msg
+│   │
+│   ├── KINCO/                   # Kinco servo drivers
+│   │   ├── kinco_can_control/   # Kinco C++ driver
+│   │   │   └── src/kinco_can_control_node.cpp
+│   │   └── kinco_can_interfaces/# Kinco message definitions
+│   │       └── msg/
+│   │           ├── KincoCmd.msg
+│   │           └── KincoState.msg
+│   │
+│   ├── hardware/                # Hardware abstraction (placeholder)
+│   ├── navigation/              # Navigation algorithms (placeholder)
+│   └── perception/              # Perception algorithms (placeholder)
 │
 ├── scripts/                     # Utility Scripts
-│   ├── s4                       # Main CLI (tauri-style: check/dev/build/stop/status/can)
-│   └── can_manager.sh           # CAN device manager (internal tool)
+│   └── s4                       # Main CLI (check/dev/build/stop/status)
 │
 ├── config/                      # Hardware Configuration
 │   ├── hardware_profile.yaml    # Hardware parameters
+│   ├── can_devices.yaml         # CAN device configuration
 │   └── config_loader.py         # Configuration tool
 │
+├── web_dashboard/               # Web-based monitoring
+│   ├── s4_dashboard.html        # Main dashboard (AGV + WHJ control)
+│   ├── agv_test_control.html    # AGV test interface
+│   ├── app.js                   # JavaScript backend
+│   └── style.css                # Styling
+│
+├── drivers/                     # CAN Driver Source
+│   └── peak-linux-driver-8.18.0/# PEAK USB-CAN driver source
+│
 ├── docs/                        # Documentation
-│   ├── setup/                   # Environment setup guides
-│   ├── hardware/                # Hardware manuals
-│   ├── deployment/              # Deployment guides
-│   └── can_design/              # CAN architecture design
+│   ├── architecture_recommendation.md
+│   ├── ros2_setup/
+│   ├── can_design/
+│   └── deployment/
 │
 ├── build/                       # Build output (auto-generated)
 ├── install/                     # Install files (auto-generated)
-├── log/                         # Build logs (auto-generated)
-└── PROJECT_LOG.md               # Development log (Chinese)
+└── log/                         # Build logs (auto-generated)
 ```
 
 ---
@@ -63,6 +110,7 @@ Blueberry_s4/                    # ROS2 Workspace Root
 ## Technology Stack
 
 ### Core Dependencies
+
 | Package | Purpose | Version |
 |---------|---------|---------|
 | ROS2 Humble | Robot middleware | Latest |
@@ -72,29 +120,51 @@ Blueberry_s4/                    # ROS2 Workspace Root
 | can-utils | CAN debugging tools | Latest |
 
 ### Hardware Interfaces
-| Device | Interface | Protocol | Bitrate |
-|--------|-----------|----------|---------|
-| FW-Max AGV | CAN 2.0 | Custom | 500K |
-| RealMan WHJ | CAN-FD | CANopen | 1M/5M |
-| Kinco Servo | CAN-FD | CANopen | 1M |
+
+| Device | Interface | Driver | Bitrate | CAN IDs |
+|--------|-----------|--------|---------|---------|
+| FW-Max AGV | CAN 2.0 | pcan (PEAK) | 500K | 0x18C4D1D0 (TX), 0x98C4D1EF (RX) |
+| RealMan WHJ | CAN-FD | usbcanfd (ZLG) | 1M/5M | Node ID 7 |
+| Kinco Servo | CAN-FD | usbcanfd (ZLG) | 1M/5M | Node ID 1 |
+
+### CAN Message IDs (AGV)
+
+All AGV CAN IDs use **29-bit extended frame format**.
+
+| Direction | CAN ID | Description |
+|-----------|--------|-------------|
+| TX | `0x18C4D1D0` | Motion control command |
+| TX | `0x18C4D2D0` | Steering control command |
+| TX | `0x18C4D7D0` | IO control command |
+| RX | `0x98C4D1EF` | Control feedback |
+| RX | `0x98C4D2EF` | Steering feedback |
+| RX | `0x98C4D6EF` | Left front wheel feedback |
+| RX | `0x98C4D7EF` | Left rear wheel feedback |
+| RX | `0x98C4D8EF` | Right rear wheel feedback |
+| RX | `0x98C4D9EF` | Right front wheel feedback |
+| RX | `0x98C4DAEF` | IO feedback |
+| RX | `0x98C4DCEF` | Front angle feedback |
+| RX | `0x98C4DDEF` | Rear angle feedback |
+| RX | `0x98C4E1EF` | BMS feedback |
+| RX | `0x98C4E2EF` | BMS flag feedback |
 
 ---
 
 ## Build Instructions
 
 ### Prerequisites
-```bash
-# 安装 ROS2 Humble (如果未安装)
-# 参考: https://docs.ros.org/en/humble/Installation.html
-# Ubuntu 22.04:
-#   sudo apt install ros-humble-desktop
-#   sudo apt install python3-colcon-common-extensions python3-rosdep
 
-# 加载 ROS2 环境
+```bash
+# Install ROS2 Humble (Ubuntu 22.04)
+sudo apt install ros-humble-desktop
+sudo apt install python3-colcon-common-extensions python3-rosdep
+
+# Load ROS2 environment
 source /opt/ros/humble/setup.bash
 ```
 
 ### Build Commands
+
 ```bash
 cd ~/Blueberry_s4
 
@@ -113,6 +183,7 @@ source install/setup.bash
 ```
 
 ### Dependency Installation
+
 ```bash
 # Update rosdep
 rosdep update
@@ -126,39 +197,40 @@ rosdep install --from-paths src --ignore-src -y
 ## Run Instructions
 
 ### Quick Start (Recommended)
-```bash
-# 推荐使用方式 (类似 tauri cli)
-./scripts/s4 check           # 检查环境和依赖
-./scripts/s4 dev             # 启动开发环境 (硬件模式)
-./scripts/s4 dev sim         # 仿真模式
-./scripts/s4 dev teleop      # 硬件 + 键盘遥控
 
-# 其他命令
-./scripts/s4 build           # 编译工作空间
-./scripts/s4 build clean     # 清理并编译
-./scripts/s4 stop            # 停止所有节点
-./scripts/s4 status          # 查看系统状态
-sudo ./scripts/s4 can auto   # 自动配置 CAN 设备
+```bash
+# 1. Initialize hardware (needs sudo)
+sudo ./scripts/s4 init
+
+# 2. Build project
+./scripts/s4 build
+
+# 3. Start development environment
+./scripts/s4 dev          # Hardware mode
+./scripts/s4 dev sim      # Simulation mode
+./scripts/s4 dev teleop   # Hardware + keyboard control
+
+# Other commands
+./scripts/s4 stop         # Stop all nodes
+./scripts/s4 status       # View system status
 ```
 
 ### Manual Start
-```bash
-# 1. Configure CAN (if not using s4 dev)
-sudo ./scripts/s4 can auto
 
-# 2. Source environment
+```bash
+# 1. Source environment
 source install/setup.bash
 
-# 3. Launch
+# 2. Launch main system
 ros2 launch bringup robot.launch.py
 
 # With parameters
 ros2 launch bringup robot.launch.py sim:=true
-# 手动指定物理接口 (不推荐，建议用 s4 init 自动配置)
 ros2 launch bringup robot.launch.py can_agv_interface:=can3 can_devices_interface:=can2
 ```
 
 ### Launch Arguments
+
 | Argument | Default | Description |
 |----------|---------|-------------|
 | `sim` | `false` | Enable simulation mode |
@@ -167,10 +239,46 @@ ros2 launch bringup robot.launch.py can_agv_interface:=can3 can_devices_interfac
 | `use_kinco` | `true` | Enable Kinco servo |
 | `use_cameras` | `false` | Enable D405 cameras |
 | `use_lidar` | `false` | Enable Livox lidar |
-| `can_agv_interface` | `can_agv` | CAN interface for AGV (PEAK PCAN-USB) |
-| `can_devices_interface` | `can_fd` | CAN interface for WHJ+Kinco (ZLG CANFD) |
+| `can_agv_interface` | `can_agv` | CAN interface for AGV (logical name) |
+| `can_devices_interface` | `can_fd` | CAN interface for WHJ+Kinco (logical name) |
 
-> **说明**: `can_agv` 和 `can_fd` 是逻辑名，运行 `sudo ./s4 init` 后会自动映射到实际的物理接口 (can2/can3 等)。
+---
+
+## CAN Device Management
+
+### Logical Names
+
+S4 uses **logical names** to identify CAN devices, avoiding confusion from changing physical interface names:
+
+| Logical Name | Physical Device | Purpose |
+|--------------|-----------------|---------|
+| `can_agv` | PEAK PCAN-USB | AGV (YUHESEN FW-Max) @ 500K |
+| `can_fd` | ZLG CANFD | WHJ + Kinco @ 1M/5M CAN-FD |
+
+The mapping is auto-detected by `sudo ./s4 init` and stored in `/tmp/s4_can_mapping.conf`.
+
+### Quick Commands
+
+```bash
+# Check CAN status and device mapping
+./scripts/s4 status
+
+# Initialize and auto-configure all CAN devices
+sudo ./scripts/s4 init
+
+# View mapping file
+cat /tmp/s4_can_mapping.conf
+```
+
+### Manual CAN Configuration
+
+```bash
+# PEAK PCAN-USB (AGV) - 500K
+sudo ip link set can3 up type can bitrate 500000
+
+# ZLG CANFD (WHJ + Kinco) - 1M/5M
+sudo ip link set can2 up type can bitrate 1000000 dbitrate 5000000 fd on
+```
 
 ---
 
@@ -179,108 +287,57 @@ ros2 launch bringup robot.launch.py can_agv_interface:=can3 can_devices_interfac
 ### Package Structure
 
 #### bringup (Main Package)
-```
-src/bringup/
-├── bringup_module/          # Python package
-├── launch/
-│   └── robot.launch.py      # Main launch file
-├── config/
-│   ├── robot.yaml           # Robot parameters
-│   └── s4.rviz              # RViz configuration
-├── layouts/
-│   └── s4_default.json      # Foxglove layout
-└── test/                    # Unit tests
-```
+- **Type**: ament_python
+- **Purpose**: Main entry point, launch files, configurations
+- **Key Files**:
+  - `launch/robot.launch.py` - Main launch file
+  - `config/robot.yaml` - Robot parameters
+  - `layouts/s4_default.json` - Foxglove layout
 
-#### yhs_can_control (Third-party AGV Driver)
-```
-src/YUHESEN-FW-MAX/yhs_can_control/
-├── src/
-│   └── yhs_can_control_node.cpp    # Main C++ node
-├── include/yhs_can_control/
-│   └── yhs_can_control_node.hpp    # Header file
-├── launch/
-│   └── yhs_can_control.launch.py   # Launch file
-├── params/
-│   └── cfg.yaml                    # Node parameters
-└── package.xml
-```
+#### yhs_can_control (AGV Driver)
+- **Type**: ament_cmake (C++)
+- **Purpose**: YUHESEN FW-Max AGV control
+- **Key Files**:
+  - `src/yhs_can_control_node.cpp` - Main control node
+  - `params/cfg.yaml` - Node parameters
+- **Topics**:
+  - Subscribers: `/ctrl_cmd`, `/io_cmd`, `/steering_ctrl_cmd`
+  - Publishers: `/chassis_info_fb`, `/odom`
 
-#### yhs_can_interfaces (AGV Messages)
-```
-src/YUHESEN-FW-MAX/yhs_can_interfaces/
-├── msg/                     # Message definitions
-│   ├── CtrlCmd.msg         # Control command
-│   ├── CtrlFb.msg          # Control feedback
-│   ├── IoCmd.msg           # IO command
-│   ├── IoFb.msg            # IO feedback
-│   ├── ChassisInfoFb.msg   # Chassis info
-│   └── ...
-└── CMakeLists.txt
-```
+#### whj_can_py (WHJ Driver - ACTIVE)
+- **Type**: ament_python
+- **Purpose**: RealMan WHJ lifter control with trajectory planning
+- **Key Files**:
+  - `whj_can_py/whj_can_node.py` - ROS2 node
+  - `core/socketcan_driver.py` - SocketCAN driver
+  - `drivers/whj_driver.py` - WHJ motor driver
+  - `core/protocol/whj_protocol.py` - Protocol definitions
+- **Topics**:
+  - Subscriber: `/whj_cmd`
+  - Publisher: `/whj_state`
 
-### CAN Message IDs (AGV)
+#### kinco_can_control (Kinco Driver)
+- **Type**: ament_cmake (C++)
+- **Purpose**: Kinco servo motor control
+- **Key Files**:
+  - `src/kinco_can_control_node.cpp` - Main control node
+- **Topics**:
+  - Subscriber: `/kinco_cmd`
+  - Publisher: `/kinco_state`
 
-| Direction | CAN ID | Description |
-|-----------|--------|-------------|
-| TX | `0x98C4D1D0` | Motion control command |
-| TX | `0x98C4D2D0` | Steering control command |
-| TX | `0x98C4D7D0` | IO control command |
-| RX | `0x98C4D1EF` | Control feedback |
-| RX | `0x98C4D2EF` | Steering feedback |
-| RX | `0x98C4D6EF` | Left front wheel feedback |
-| RX | `0x98C4D7EF` | Left rear wheel feedback |
-| RX | `0x98C4D8EF` | Right rear wheel feedback |
-| RX | `0x98C4D9EF` | Right front wheel feedback |
-| RX | `0x98C4DAEF` | IO feedback |
-| RX | `0x98C4DCEF` | Front angle feedback |
-| RX | `0x98C4DDEF` | Rear angle feedback |
-| RX | `0x98C4E1EF` | BMS feedback |
-| RX | `0x98C4E2EF` | BMS flag feedback |
+### Interface Packages
 
-IO使能控制需要发送使能标志位，心跳信息和校验位 io_cmd_unlock 安全解锁开关0x02, 需要一下型号下降沿间隔20ms下发， 可以请求解锁安全停车开关。 
-|ID        | D0 | D1 | D2 | D3 | D4 | D5 | D6 | D7 | D8 |
-|0x18C4D7D0|0x02|0x00|0x00|0x00|0x00|0x00|0x00|0x00|0x02|
-|0x18C4D7D0|0x02|0x00|0x00|0x00|0x00|0x00|0x00|0x10|0x12|
-|0x18C4D7D0|0x00|0x00|0x00|0x00|0x00|0x00|0x00|0x20|0x20|
-|0x18C4D7D0|0x00|0x00|0x00|0x00|0x00|0x00|0x00|0x30|0x30|
-
-反馈消息如下 
-
-|ID        | D0 | D1 | D2 | D3 | D4 | D5 | D6 | D7 | D8 |
-|0x18C4DAEF|0x00|0x00|0x00|0x00|0x00|0x00|0x00|0x00|0x02|
-|0x18C4DAEF|0x02|0x00|0x00|0x00|0x00|0x00|0x00|0x00|0x02|
-|0x18C4DAEF|0x00|0x00|0x00|0x00|0x00|0x00|0x00|0x00|0x02|
-
-ctrl_cmd示例如下：
-目标档位信号值为0~3bit，物理值范围为：00至08，默认目标档位为00即disable
-档：目标档位给定为01时为驻车档；目标档位给定02时为空档：目标档位给定06时为4T4D档：目标档位给定08时为横移档。在ctrl_cmd消息下目标档位给定05或07无效。
-例1：目标档位请求为4T4D档（06）时，车辆为四转四驱模式：
-目标×轴线速度为0.001m/s/bit总线信号，若想要请求0.5m/s的目标X轴线速度，则总线信号为500（0x01F4），X轴线速度值向前为正，向后为负；
-目标Z轴角速度为0.01%/s/bit*总线信号，若想要请求-25%/s的目标Z轴角速度，则总线信号为-2500（0xF63C），从正上方俯视车辆，Z轴角速度逆时针为正，顺时针为负；
-目标Y轴线速度此档位时无效，默认填0（0×0000）即可。
-
-|ID        | D0 | D1 | D2 | D3 | D4 | D5 | D6 | D7 |
-|0x18C4D1D0|0x46|0x1F|0xC0|0x63|0x0F|0x00|0x10|0xE5|
-|0x18C4D1D0|0x46|0x1F|0xC0|0x63|0x0F|0x00|0x20|0xD5|
-|0x18C4D1D0|0x46|0x1F|0xC0|0x63|0x0F|0x00|0x30|0xC5|
-以上三帧信息间隔10ms循环下发，可以控制车辆已0.5m/s的x轴线速度，-25°/s 的z轴角速度四转4驱模式运行。
-
-反馈消息如下：
-|ID        | D0 | D1 | D2 | D3 | D4 | D5 | D6 | D7 |
-|0x18C4D1EF|0x46|0x1F|0xC0|0x63|0x0F|0x00|0xA0|0x55|
-|0x18C4D1EF|0x46|0x1F|0xC0|0x63|0x0F|0x00|0xB0|0x45|
-|0x18C4D1EF|0x46|0x1F|0xC0|0x63|0x0F|0x00|0xC0|0x35|
-
-异或校验和心跳信号循环变化，由于运行车速自动调节可能反馈值不是绝对的。
-
-**Note**: All AGV CAN IDs use 29-bit extended frame format.
+Each driver has a corresponding interfaces package defining custom ROS2 messages:
+- `yhs_can_interfaces/` - AGV messages
+- `whj_can_interfaces/` - WHJ messages  
+- `kinco_can_interfaces/` - Kinco messages
 
 ---
 
 ## Testing
 
 ### Run Tests
+
 ```bash
 # Run all tests
 cd ~/Blueberry_s4
@@ -294,10 +351,17 @@ colcon test --packages-select bringup
 colcon test-result --verbose
 ```
 
+### Test Files
+
+- `src/bringup/test/test_copyright.py` - Copyright header check
+- `src/bringup/test/test_flake8.py` - Python style check
+- `src/bringup/test/test_pep257.py` - Docstring check
+
 ### CAN Testing
+
 ```bash
 # Check CAN status
-./scripts/s4 can status
+./scripts/s4 status
 
 # Manual CAN test
 candump can0
@@ -307,6 +371,7 @@ cansend can0 123#DEADBEEF
 ```
 
 ### ROS2 Debugging
+
 ```bash
 # List topics
 ros2 topic list
@@ -332,14 +397,16 @@ rqt_graph
 ### Code Style
 
 #### Python
-- Follow PEP 8
+- Follow **PEP 8**
 - Use type hints where appropriate
-- Docstrings in Chinese (following existing code)
+- Docstrings in **Chinese** (following existing code)
+- Maximum line length: 100 characters
 
 #### C++
-- ROS2 C++ style guidelines
+- Follow **ROS2 C++ style guidelines**
 - Use `snake_case` for variables and functions
 - Use `PascalCase` for classes
+- Use 2-space indentation
 
 ### Package Naming
 - Use `snake_case` for package names
@@ -358,58 +425,27 @@ rqt_graph
 
 ---
 
-## CAN Device Management
+## Web Dashboard
 
-### Supported Devices
-| Device Type | Driver | Logical Name | Physical Interface |
-|-------------|--------|--------------|-------------------|
-| Jetson Built-in CAN | mttcan | - | can0/can1 |
-| PEAK USB-CAN | pcan | `can_agv` | can2/can3 (auto-detected) |
-| ZLG CAN-FD | usbcanfd | `can_fd` | can2/can3 (auto-detected) |
-
-> **逻辑名说明**: 运行 `sudo ./s4 init` 后，系统会自动检测 USB-CAN 设备并创建映射文件 `/tmp/s4_can_mapping.conf`，将 `can_agv` 映射到 PEAK 设备，`can_fd` 映射到 ZLG 设备。
-
-### Quick Commands
-```bash
-# Check CAN status and device mapping
-./scripts/s4 status
-
-# Initialize and auto-configure all CAN devices
-sudo ./scripts/s4 init
-
-# Install PEAK driver (if needed)
-sudo ./scripts/s4 can install-driver
-```
-
-### CAN Device Mapping
-
-S4 使用**逻辑名**来标识 CAN 设备，避免因 USB 枚举顺序变化导致接口名混乱：
+### Start Web Dashboard
 
 ```bash
-# 查看当前映射
-./scripts/s4 status
+# Automatic (via s4 dev)
+./scripts/s4 dev
 
-# 示例输出:
-# CAN Device Mapping:
-#   ● can_agv -> can3 (pcan)     # AGV (PEAK)
-#   ● can_fd  -> can2 (usbcanfd) # WHJ + Kinco (ZLG)
+# Manual
+bash web_dashboard/start_web_dashboard.sh
 ```
 
-**手动指定物理接口** (不推荐，除非你知道确切接口名):
-```bash
-ros2 launch bringup robot.launch.py can_agv_interface:=can3 can_devices_interface:=can2
-```
+### Access
 
-### Auto-start Service (可选)
-> 注意: `install_can_service.sh` 已被移除，如需开机自动配置 CAN，请手动创建 systemd 服务或使用 cron。
+Open browser and navigate to: `http://<jetson-ip>:8080`
 
-```bash
-# 手动配置 CAN
-sudo ./scripts/s4 can auto
-
-# 或添加到 ~/.bashrc
-# sudo ./scripts/s4 can auto
-```
+### Features
+- Real-time AGV status (speed, angle, voltage, current)
+- WHJ lifter control with trajectory planning
+- ROS2 topic monitoring
+- WebSocket connection to ROS2 (via rosbridge)
 
 ---
 
@@ -419,7 +455,7 @@ sudo ./scripts/s4 can auto
 **Solution**:
 ```bash
 sudo modprobe can can_raw can_dev
-sudo ./scripts/s4 can auto
+sudo ./scripts/s4 init
 ```
 
 ### Issue: Permission denied on CAN
@@ -436,12 +472,17 @@ source install/setup.bash
 # Or check if package.xml is correct
 ```
 
-### Issue: xterm error in SSH
-**Cause**: teleop_keyboard uses xterm which requires display
-**Solution**: Run with `teleop:=false` or use local terminal
-```bash
-ros2 launch bringup robot.launch.py use_teleop:=false
-```
+### Issue: WHJ motor fails to enable
+**Solution**:
+- Check CAN-FD interface is up: `ip link show can_fd`
+- Verify motor is powered on
+- Check motor ID configuration (default: 7)
+
+### Issue: Kinco servo no response
+**Solution**:
+- Verify CAN interface: `candump can_agv`
+- Check node ID (default: 1)
+- Send NMT start: `cansend can_agv 000#0100`
 
 ---
 
@@ -450,7 +491,7 @@ ros2 launch bringup robot.launch.py use_teleop:=false
 ### Web Dashboard (Recommended)
 ```bash
 # On Jetson
-bash ~/s4_ws/web_dashboard/start_web_dashboard.sh
+./scripts/s4 dev
 
 # Access via browser
 http://<jetson-ip>:8080
@@ -463,14 +504,14 @@ ros2 launch rosbridge_server rosbridge_websocket_launch.xml
 
 # Connect from browser
 # URL: https://studio.foxglove.dev
-# WebSocket: ws://<jetson-ip>:9090 or :9091
+# WebSocket: ws://<jetson-ip>:9091
 ```
 
 ### RViz via SSH X11
 ```bash
 # Local computer
 ssh -X hkclr@<jetson-ip>
-bash ~/s4_ws/launch_rviz_full.sh
+bash ~/Blueberry_s4/launch_rviz_full.sh
 ```
 
 ---
@@ -478,31 +519,31 @@ bash ~/s4_ws/launch_rviz_full.sh
 ## Deployment
 
 ### Jetson Deployment
-> 注意: 部署脚本已简化，建议直接使用 `./s4` 命令进行管理。
 
 ```bash
-# 1. 克隆项目到 Jetson
+# 1. Clone project
 cd ~/Blueberry_s4
 
-# 2. 检查环境
-./scripts/s4 check
+# 2. Check environment
+./scripts/s4 status
 
-# 3. 编译
+# 3. Compile
 ./scripts/s4 build
 
-# 4. 配置 CAN (需要 sudo)
-sudo ./scripts/s4 can auto
+# 4. Configure CAN (needs sudo)
+sudo ./scripts/s4 init
 
-# 5. 启动
+# 5. Start
 ./scripts/s4 dev
 ```
 
 ### Environment Variables
+
 ```bash
 # Required for isolated operation
 export ROS_DOMAIN_ID=42
 export ROS_LOCALHOST_ONLY=0
-source ~/s4_ws/install/setup.bash
+source ~/Blueberry_s4/install/setup.bash
 ```
 
 ---
@@ -525,4 +566,4 @@ source ~/s4_ws/install/setup.bash
 
 ---
 
-*Last Updated: 2026-03-24*
+*Last Updated: 2026-04-01*
