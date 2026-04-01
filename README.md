@@ -17,13 +17,65 @@
 
 ### 1. 克隆并编译
 
+#### 1.1 克隆项目
+
 ```bash
 git clone https://github.com/licher255/blueberry_s4.git
 cd blueberry_s4
-source /opt/ros/humble/setup.bash
-rm -rf build install log
-colcon build --symlink-install
 ```
+
+#### 1.2 编译 CAN 驱动（如需要）
+
+如果系统没有预装 PEAK 或 ZLG 驱动，需要编译：
+
+**PEAK USB-CAN 驱动**（AGV 用）：
+```bash
+cd drivers/peak-linux-driver-8.18.0
+make
+sudo make install
+sudo modprobe pcan
+cd ../..
+```
+
+**ZLG USB-CANFD 驱动**（WHJ/Kinco 用）：
+```bash
+# 使用自动安装脚本
+sudo ./drivers/install_zlg_socketcan.sh
+
+# 或手动编译
+cd drivers/zlg_usbcanfd_2_10
+make
+sudo insmod usbcanfd.ko
+cd ../..
+```
+
+**验证驱动**：
+```bash
+lsmod | grep -E "pcan|usbcanfd"
+# 应显示 pcan 和/或 usbcanfd
+```
+
+#### 1.3 编译 ROS2 包
+
+```bash
+source /opt/ros/humble/setup.bash
+
+# 清理（如果需要）
+rm -rf build install log
+
+# 编译所有包（包含 C++ 驱动）
+colcon build --symlink-install
+
+# 加载编译后的环境
+source install/setup.bash
+```
+
+**编译内容说明**：
+- `yhs_can_control` - AGV C++ 驱动
+- `whj_can_control` - WHJ C++ 驱动（备用）
+- `kinco_can_control` - Kinco C++ 驱动
+- `bringup` - 启动包
+- `*_interfaces` - 消息接口包
 
 ### 2. 初始化 CAN 设备（需要 sudo）
 
@@ -273,7 +325,35 @@ sudo ./scripts/s4 init
 
 ## 🔧 故障排除
 
-### 问题 1: CAN 设备未找到
+### 问题 1: 驱动未加载（最常见）
+
+**症状**: `lsusb` 能看到设备，但 `s4 init` 提示驱动未加载
+
+**解决**:
+```bash
+# 检查驱动是否已加载
+lsmod | grep -E "pcan|usbcanfd"
+
+# 如果没有输出，需要编译安装驱动
+
+# PEAK 驱动（AGV）
+cd drivers/peak-linux-driver-8.18.0
+make clean && make
+sudo make install
+sudo modprobe pcan
+
+# ZLG 驱动（WHJ/Kinco）
+cd drivers/zlg_usbcanfd_2_10
+make
+sudo insmod usbcanfd.ko
+
+# 验证
+cd ~/Blueberry_s4
+lsmod | grep -E "pcan|usbcanfd"
+# 现在应该显示驱动已加载
+```
+
+### 问题 2: CAN 设备未找到
 
 ```bash
 # 检查 USB 设备
