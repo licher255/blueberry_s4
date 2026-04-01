@@ -440,27 +440,28 @@ class WHJCanNode(Node):
     def destroy_node(self):
         """Cleanup on shutdown"""
         self.get_logger().info("Shutting down...")
+        
+        # Stop running flag first to stop publish_loop
         self.running = False
         
         # Stop motion thread
         if self.motion_thread and self.motion_thread.is_alive():
             self._motion_stop_event.set()
-            self.motion_thread.join(timeout=2.0)
+            self.motion_thread.join(timeout=1.0)
         
+        # Wait for publish thread to stop (with short timeout)
         if self.publish_thread:
-            self.publish_thread.join(timeout=2.0)
+            self.publish_thread.join(timeout=1.0)
         
-        if self.motor:
-            try:
-                self.motor.disable()
-            except:
-                pass
-        
+        # Close CAN driver (motor will be disabled automatically by power loss)
         if self.can_driver:
             try:
                 self.can_driver.close()
             except:
                 pass
+        
+        # Note: Don't try to disable motor here - it may block
+        # and the motor will be disabled by power loss anyway
         
         super().destroy_node()
 

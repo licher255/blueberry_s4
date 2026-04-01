@@ -368,8 +368,7 @@ colcon build --symlink-install                    # 全编译
 colcon build --packages-select <包名> --symlink-install  # 单包
 
 # ========== 运行 ==========
-ros2 launch bringup robot.launch.py     # 启动完整系统
-ros2 launch bringup robot.launch.py --show-args  # 查看参数
+
 
 # ========== 调试 ==========
 ros2 topic list                    # 查看话题
@@ -418,3 +417,8 @@ ros2 param set /agv_node max_speed 1.5  # 设置参数
 ## 📄 许可证
 
 MIT License - 详见 [LICENSE](LICENSE)
+
+## 什么是对的开始
+1. CAN 驱动加载
+2. CAN2 pcan  -- can_agv
+3. CAN3 usbcanfd -- can_fd

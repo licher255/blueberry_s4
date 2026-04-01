@@ -1,0 +1,5 @@
+kinco_can_control_node:
+  ros__parameters:
+    can_name: "can3"     # PEAK PCAN-USB for Kinco (shared with AGV)
+    node_id: 1
+    state_publish_rate: 10.0

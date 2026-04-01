@@ -1,0 +1,1439 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S4 综合控制面板 - AGV & WHJ & Kinco</title>
+<script src="https://cdn.jsdelivr.net/npm/roslib@1/build/roslib.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { 
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%); 
+    min-height: 100vh; 
+    color: #e0e0e0; 
+    padding: 20px; 
+}
+.container { max-width: 1400px; margin: 0 auto; }
+h1 { 
+    text-align: center; 
+    color: #00d4ff; 
+    text-shadow: 0 0 20px rgba(0, 212, 255, 0.5); 
+    margin-bottom: 20px; 
+    font-size: 2rem; 
+}
+.warning-banner {
+    background: linear-gradient(135deg, #ff6b6b, #ee5a5a);
+    color: white;
+    padding: 15px;
+    border-radius: 10px;
+    text-align: center;
+    margin-bottom: 20px;
+    font-weight: bold;
+    box-shadow: 0 4px 15px rgba(238, 90, 90, 0.4);
+}
+.dashboard-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+@media (max-width: 1100px) { .dashboard-grid { grid-template-columns: 1fr; } }
+.panel { 
+    background: rgba(20, 20, 40, 0.9); 
+    border-radius: 15px; 
+    padding: 20px; 
+    border: 1px solid rgba(100, 100, 200, 0.3); 
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3); 
+}
+h2 { 
+    color: #a855f7; 
+    margin-bottom: 15px; 
+    font-size: 1.2rem; 
+    padding-bottom: 10px;
+    border-bottom: 2px solid rgba(168, 85, 247, 0.4); 
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+h2.whj { color: #22c55e; border-bottom-color: rgba(34, 197, 94, 0.4); }
+.connection-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 15px; }
+.input-group { flex: 1; min-width: 200px; }
+.input-group label { display: block; margin-bottom: 5px; color: #888; font-size: 0.85rem; }
+input[type="text"], input[type="number"] { 
+    width: 100%; 
+    padding: 10px 12px; 
+    border: 1px solid rgba(100, 100, 200, 0.4); 
+    border-radius: 8px; 
+    background: rgba(10, 10, 30, 0.8); 
+    color: #e0e0e0; 
+    font-size: 0.95rem; 
+}
+.btn { 
+    padding: 10px 20px; 
+    border: none; 
+    border-radius: 8px; 
+    font-size: 0.95rem; 
+    font-weight: 600; 
+    cursor: pointer; 
+    transition: all 0.3s ease; 
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.btn-connect { background: linear-gradient(135deg, #00d4ff, #0099cc); color: #fff; }
+.btn-connect:hover { transform: translateY(-2px); box-shadow: 0 4px 15px rgba(0, 212, 255, 0.4); }
+.btn-enable { background: linear-gradient(135deg, #22c55e, #16a34a); color: #fff; }
+.btn-enable:hover { transform: translateY(-2px); box-shadow: 0 4px 15px rgba(34, 197, 94, 0.4); }
+.btn-disable { background: linear-gradient(135deg, #ef4444, #dc2626); color: #fff; }
+.btn-disable:hover { transform: translateY(-2px); box-shadow: 0 4px 15px rgba(239, 68, 68, 0.4); }
+.btn-clear { background: linear-gradient(135deg, #f59e0b, #d97706); color: #fff; }
+.btn-clear:hover { transform: translateY(-2px); box-shadow: 0 4px 15px rgba(245, 158, 11, 0.4); }
+.btn-send { background: linear-gradient(135deg, #a855f7, #7c3aed); color: #fff; }
+.btn-send:hover { transform: translateY(-2px); box-shadow: 0 4px 15px rgba(168, 85, 247, 0.4); }
+.status-indicator { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-left: 10px; }
+.connected { background: #22c55e; box-shadow: 0 0 10px #22c55e; }
+.disconnected { background: #ef4444; }
+.enabled { background: #22c55e; box-shadow: 0 0 10px #22c55e; }
+.disabled { background: #6b7280; }
+.error { background: #ef4444; box-shadow: 0 0 10px #ef4444; }
+
+/* AGV Controls */
+.control-panel {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    max-width: 300px;
+    margin: 0 auto;
+}
+.control-btn {
+    padding: 30px 20px;
+    border: none;
+    border-radius: 12px;
+    font-size: 1.5rem;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: manipulation;
+}
+.control-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-forward { 
+    background: linear-gradient(135deg, #22c55e, #16a34a); 
+    color: white;
+    grid-column: 2; grid-row: 1;
+}
+.btn-forward:active, .btn-forward.active {
+    background: linear-gradient(135deg, #16a34a, #15803d);
+    transform: scale(0.95);
+    box-shadow: 0 0 20px rgba(34, 197, 94, 0.6);
+}
+.btn-backward { 
+    background: linear-gradient(135deg, #ef4444, #dc2626); 
+    color: white;
+    grid-column: 2; grid-row: 3;
+}
+.btn-backward:active, .btn-backward.active {
+    background: linear-gradient(135deg, #dc2626, #b91c1c);
+    transform: scale(0.95);
+    box-shadow: 0 0 20px rgba(239, 68, 68, 0.6);
+}
+.btn-left { 
+    background: linear-gradient(135deg, #f59e0b, #d97706); 
+    color: white;
+    grid-column: 1; grid-row: 2;
+}
+.btn-left:active, .btn-left.active {
+    background: linear-gradient(135deg, #d97706, #b45309);
+    transform: scale(0.95);
+    box-shadow: 0 0 20px rgba(245, 158, 11, 0.6);
+}
+.btn-right { 
+    background: linear-gradient(135deg, #f59e0b, #d97706); 
+    color: white;
+    grid-column: 3; grid-row: 2;
+}
+.btn-right:active, .btn-right.active {
+    background: linear-gradient(135deg, #d97706, #b45309);
+    transform: scale(0.95);
+    box-shadow: 0 0 20px rgba(245, 158, 11, 0.6);
+}
+.btn-stop-center {
+    background: linear-gradient(135deg, #6b7280, #4b5563);
+    color: white;
+    grid-column: 2; grid-row: 2;
+    font-size: 1rem;
+    padding: 20px;
+}
+.emergency-stop {
+    width: 100%;
+    padding: 20px;
+    margin-top: 15px;
+    background: linear-gradient(135deg, #dc2626, #991b1b);
+    color: white;
+    font-size: 1.3rem;
+    font-weight: bold;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 15px rgba(220, 38, 38, 0.4);
+}
+.emergency-stop:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(220, 38, 38, 0.6);
+}
+
+/* WHJ Controls */
+.whj-controls { margin-top: 15px; }
+.whj-status-grid { 
+    display: grid; 
+    grid-template-columns: repeat(2, 1fr); 
+    gap: 10px; 
+    margin-bottom: 15px;
+}
+.whj-status-item { 
+    background: rgba(10, 10, 30, 0.6); 
+    padding: 12px; 
+    border-radius: 8px; 
+    border: 1px solid rgba(100, 100, 200, 0.3); 
+}
+.whj-status-label { font-size: 0.8rem; color: #888; margin-bottom: 4px; }
+.whj-status-value { 
+    font-size: 1.2rem; 
+    color: #22c55e; 
+    font-weight: 600; 
+    font-family: monospace; 
+    transition: color 0.3s ease, text-shadow 0.3s ease;
+}
+.whj-status-value.error { color: #ef4444; }
+.whj-status-value.warning { color: #f59e0b; }
+
+/* WHJ Toggle Switch */
+.whj-enable-toggle {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    margin-bottom: 15px;
+    padding: 15px;
+    background: rgba(10, 10, 30, 0.6);
+    border-radius: 10px;
+}
+.toggle-label {
+    color: #888;
+    font-size: 0.9rem;
+    min-width: 60px;
+}
+.toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 60px;
+    height: 32px;
+}
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+.toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #4b5563;
+    transition: .3s;
+    border-radius: 32px;
+}
+.toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 24px;
+    width: 24px;
+    left: 4px;
+    bottom: 4px;
+    background-color: white;
+    transition: .3s;
+    border-radius: 50%;
+}
+input:checked + .toggle-slider {
+    background: linear-gradient(135deg, #22c55e, #16a34a);
+}
+input:checked + .toggle-slider:before {
+    transform: translateX(28px);
+}
+input:disabled + .toggle-slider {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+.toggle-status {
+    color: #22c55e;
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+.toggle-status.disabled {
+    color: #6b7280;
+}
+.whj-buttons { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 15px; }
+.whj-position-control { 
+    background: rgba(10, 10, 30, 0.6); 
+    padding: 15px; 
+    border-radius: 10px; 
+    margin-top: 15px;
+}
+.whj-position-row { 
+    display: flex; 
+    gap: 10px; 
+    align-items: center; 
+    margin-bottom: 10px; 
+}
+.whj-position-row label { 
+    min-width: 80px; 
+    color: #888; 
+    font-size: 0.9rem; 
+}
+.whj-position-row input {
+    flex: 1;
+}
+.whj-position-value {
+    min-width: 100px;
+    text-align: right;
+    color: #22c55e;
+    font-family: monospace;
+    font-weight: bold;
+}
+
+/* Gear selector */
+.gear-selector { display: flex; gap: 10px; margin: 15px 0; }
+.gear-btn {
+    flex: 1;
+    padding: 12px;
+    border: 2px solid rgba(100, 100, 200, 0.4);
+    background: rgba(100, 100, 200, 0.1);
+    color: #e0e0e0;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    font-size: 0.85rem;
+}
+.gear-btn.active {
+    background: linear-gradient(135deg, #a855f7, #7c3aed);
+    border-color: #a855f7;
+    box-shadow: 0 0 15px rgba(168, 85, 247, 0.5);
+}
+
+/* Speed settings */
+.speed-setting { margin: 15px 0; padding: 15px; background: rgba(10, 10, 30, 0.6); border-radius: 10px; }
+.speed-label { display: flex; justify-content: space-between; margin-bottom: 8px; color: #888; font-size: 0.9rem; }
+.speed-value { color: #00d4ff; font-weight: bold; font-family: monospace; }
+input[type="range"] { 
+    width: 100%; 
+    height: 8px; 
+    border-radius: 4px; 
+    background: linear-gradient(90deg, #22c55e 0%, #f59e0b 50%, #ef4444 100%); 
+    outline: none; 
+    -webkit-appearance: none; 
+}
+input[type="range"]::-webkit-slider-thumb { 
+    -webkit-appearance: none; 
+    width: 20px; 
+    height: 20px; 
+    border-radius: 50%; 
+    background: #00d4ff; 
+    cursor: pointer; 
+    box-shadow: 0 0 10px rgba(0, 212, 255, 0.5); 
+}
+
+/* Info grid */
+.info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.info-item { 
+    background: rgba(10, 10, 30, 0.6); 
+    padding: 12px; 
+    border-radius: 8px; 
+    border: 1px solid rgba(100, 100, 200, 0.3); 
+}
+.info-label { font-size: 0.8rem; color: #888; margin-bottom: 4px; }
+.info-value { font-size: 1.2rem; color: #00d4ff; font-weight: 600; font-family: monospace; }
+
+/* Log */
+.log-container { 
+    background: rgba(10, 10, 30, 0.8); 
+    border-radius: 10px; 
+    padding: 15px; 
+    height: 180px; 
+    overflow-y: auto; 
+    font-family: monospace; 
+    font-size: 0.85rem; 
+    border: 1px solid rgba(100, 100, 200, 0.3); 
+}
+.log-entry { padding: 3px 0; border-bottom: 1px solid rgba(100, 100, 200, 0.1); }
+.log-entry.error { color: #ef4444; }
+.log-entry.success { color: #22c55e; }
+.log-entry.warn { color: #f59e0b; }
+.log-entry.info { color: #00d4ff; }
+.log-entry.whj { color: #22c55e; }
+
+.full-width { grid-column: 1 / -1; }
+</style>
+</head>
+<body>
+<div class="container">
+    <h1>🚗 S4 综合控制面板 - AGV & WHJ & Kinco</h1>
+    
+    <div class="warning-banner">
+        ⚠️ 安全警告：请确保AGV和WHJ周围无障碍物，AGV使用小速度测试，WHJ大距离移动使用轨迹规划！
+    </div>
+    
+    <div class="dashboard-grid">
+        <!-- ROS2 连接面板 -->
+        <div class="panel">
+            <h2>🔗 ROS2 连接</h2>
+            <div class="connection-row">
+                <div class="input-group">
+                    <label>WebSocket URL</label>
+                    <input type="text" id="wsUrl" value="ws://localhost:9091">
+                </div>
+                <button class="btn btn-connect" id="connectBtn" onclick="toggleConnection()">连接</button>
+                <span id="connStatus" class="status-indicator disconnected"></span>
+            </div>
+            <div style="margin-top: 10px; font-size: 0.8rem; color: #666;">
+                提示：连接后会自动发送AGV解锁序列，并订阅WHJ状态
+            </div>
+        </div>
+        
+        <!-- WHJ 快速控制面板 -->
+        <div class="panel">
+            <h2 class="whj">🔧 WHJ 升降机快速控制</h2>
+            <!-- WHJ 使能 Toggle Switch -->
+            <div class="whj-enable-toggle">
+                <span class="toggle-label">电机使能</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="whjEnableToggle" onchange="whjToggleEnable()" disabled>
+                    <span class="toggle-slider"></span>
+                </label>
+                <span id="whjEnableStatus" class="toggle-status">未使能</span>
+            </div>
+            
+            <!-- 状态操作按钮 -->
+            <div class="whj-buttons">
+                <button class="btn btn-clear" id="whjClearBtn" onclick="whjClearError()" disabled>清除错误</button>
+                <button class="btn btn-enable" id="whjRecoverBtn" onclick="whjRecover()" disabled>🔧 自动恢复</button>
+            </div>
+            <div style="font-size: 0.8rem; color: #888; margin-top: 5px;">
+                提示：如果使能失败，点击"自动恢复"进行错误清除和重新初始化
+            </div>
+            <div class="whj-position-control">
+                <div class="whj-position-row">
+                    <label>目标位置:</label>
+                    <input type="range" id="whjTargetSlider" min="0" max="900" step="1" value="500" oninput="updateWhjTargetDisplay()">
+                    <span class="whj-position-value" id="whjTargetValue">500 mm</span>
+                </div>
+                <div style="font-size: 0.8rem; color: #888; margin-top: 5px;">
+                    范围: 0-900 mm (0-50000°)
+                </div>
+                <div class="whj-position-row">
+                    <button class="btn btn-send" id="whjMoveBtn" onclick="whjMoveToTarget()" disabled style="width: 100%;">
+                        移动到目标位置
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- AGV 控制面板 -->
+        <div class="panel">
+            <h2>🎮 AGV 方向控制</h2>
+            
+            <div class="gear-selector">
+                <button class="gear-btn active" id="gear4T4D" onclick="setGear(6)">
+                    4T4D模式<br><small>(前进/后退/旋转)</small>
+                </button>
+                <button class="gear-btn" id="gearLateral" onclick="setGear(8)">
+                    横移模式<br><small>(前进/后退/平移)</small>
+                </button>
+            </div>
+            
+            <div class="speed-setting">
+                <div class="speed-label">
+                    <span>AGV 测试速度 (X轴 - 前后)</span>
+                    <span class="speed-value" id="speedXValue">0.05 m/s</span>
+                </div>
+                <input type="range" id="speedXSlider" min="0.01" max="0.5" step="0.01" value="0.05" oninput="updateSpeedDisplay()">
+            </div>
+            
+            <div class="speed-setting" id="speedYSetting" style="display: none;">
+                <div class="speed-label">
+                    <span>AGV 测试速度 (Y轴 - 左右平移)</span>
+                    <span class="speed-value" id="speedYValue">0.05 m/s</span>
+                </div>
+                <input type="range" id="speedYSlider" min="0.01" max="0.3" step="0.01" value="0.05" oninput="updateSpeedDisplay()">
+            </div>
+            
+            <div class="speed-setting">
+                <div class="speed-label">
+                    <span>AGV 旋转速度 (Z轴)</span>
+                    <span class="speed-value" id="speedZValue">10 °/s</span>
+                </div>
+                <input type="range" id="speedZSlider" min="1" max="30" step="1" value="10" oninput="updateSpeedDisplay()">
+            </div>
+            
+            <div class="control-panel">
+                <button class="control-btn btn-forward" id="btnForward" disabled 
+                    onmousedown="startMove('forward')" onmouseup="stopMove()"
+                    ontouchstart="startMove('forward')" ontouchend="stopMove()">▲</button>
+                
+                <button class="control-btn btn-left" id="btnLeft" disabled 
+                    onmousedown="startMove('left')" onmouseup="stopMove()"
+                    ontouchstart="startMove('left')" ontouchend="stopMove()">◀</button>
+                
+                <button class="control-btn btn-stop-center" id="btnStopCenter" disabled 
+                    onclick="stopMove()">STOP</button>
+                
+                <button class="control-btn btn-right" id="btnRight" disabled 
+                    onmousedown="startMove('right')" onmouseup="stopMove()"
+                    ontouchstart="startMove('right')" ontouchend="stopMove()">▶</button>
+                
+                <button class="control-btn btn-backward" id="btnBackward" disabled 
+                    onmousedown="startMove('backward')" onmouseup="stopMove()"
+                    ontouchstart="startMove('backward')" ontouchend="stopMove()">▼</button>
+            </div>
+            
+            <button class="emergency-stop" onclick="emergencyStop()">🛑 紧急停止 AGV</button>
+        </div>
+        
+        <!-- Kinco 控制面板 -->
+        <div class="panel">
+            <h2 style="color: #ff6b6b; border-bottom-color: rgba(255, 107, 107, 0.4);">🔄 Kinco 旋转电机控制</h2>
+            
+            <!-- 状态显示 -->
+            <div class="whj-status-grid">
+                <div class="whj-status-item">
+                    <div class="whj-status-label">当前位置</div>
+                    <div class="whj-status-value" id="kincoPosition">--</div>
+                </div>
+                <div class="whj-status-item">
+                    <div class="whj-status-label">目标位置</div>
+                    <div class="whj-status-value" id="kincoTarget">--</div>
+                </div>
+                <div class="whj-status-item">
+                    <div class="whj-status-label">剩余距离</div>
+                    <div class="whj-status-value" id="kincoRemaining">--</div>
+                </div>
+                <div class="whj-status-item">
+                    <div class="whj-status-label">状态</div>
+                    <div class="whj-status-value" id="kincoStatus">--</div>
+                </div>
+            </div>
+            
+            <!-- 位置控制 -->
+            <div class="whj-position-control" style="margin-top: 15px;">
+                <div class="whj-position-row">
+                    <label>目标角度:</label>
+                    <input type="range" id="kincoTargetSlider" min="0" max="270" step="1" value="0" oninput="updateKincoTargetDisplay()">
+                    <span class="whj-position-value" id="kincoTargetValue">0°</span>
+                </div>
+                <div class="whj-position-row" style="margin-top: 10px;">
+                    <button class="btn btn-send" id="kincoMoveBtn" onclick="kincoMoveToTarget()" disabled style="width: 100%;">
+                        移动到目标角度
+                    </button>
+                </div>
+                <div class="whj-buttons" style="margin-top: 10px;">
+                    <button class="btn btn-enable" id="kincoBtn0" onclick="kincoGoTo(0)" disabled>归零 (0°)</button>
+                    <button class="btn btn-enable" id="kincoBtn90" onclick="kincoGoTo(90)" disabled>90°</button>
+                    <button class="btn btn-enable" id="kincoBtn180" onclick="kincoGoTo(180)" disabled>180°</button>
+                    <button class="btn btn-enable" id="kincoBtn270" onclick="kincoGoTo(270)" disabled>270°</button>
+                </div>
+                <div class="whj-buttons" style="margin-top: 10px;">
+                    <button class="btn btn-clear" id="kincoSetZeroBtn" onclick="kincoSetZero()" disabled>设置零点</button>
+                </div>
+            </div>
+            
+            <div style="margin-top: 10px; font-size: 0.8rem; color: #888;">
+                范围: 0-270° | 速度: 50 RPM (固定) | 梯形轨迹规划
+            </div>
+        </div>
+        
+        <!-- WHJ 状态面板 -->
+        <div class="panel">
+            <h2 class="whj">📊 WHJ 升降机状态</h2>
+            <div class="whj-status-grid">
+                <div class="whj-status-item">
+                    <div class="whj-status-label">位置 (度)</div>
+                    <div class="whj-status-value" id="whjPosition">--</div>
+                </div>
+                <div class="whj-status-item">
+                    <div class="whj-status-label">位置 (mm)</div>
+                    <div class="whj-status-value" id="whjPositionMm">--</div>
+                </div>
+                <div class="whj-status-item">
+                    <div class="whj-status-label">速度 (RPM)</div>
+                    <div class="whj-status-value" id="whjSpeed">--</div>
+                </div>
+                <div class="whj-status-item">
+                    <div class="whj-status-label">电流 (mA)</div>
+                    <div class="whj-status-value" id="whjCurrent">--</div>
+                </div>
+                <div class="whj-status-item">
+                    <div class="whj-status-label">电压 (V)</div>
+                    <div class="whj-status-value" id="whjVoltage">--</div>
+                </div>
+                <div class="whj-status-item">
+                    <div class="whj-status-label">温度 (°C)</div>
+                    <div class="whj-status-value" id="whjTemp">--</div>
+                </div>
+                <div class="whj-status-item">
+                    <div class="whj-status-label">使能状态</div>
+                    <div class="whj-status-value" id="whjEnabled">--</div>
+                </div>
+                <div class="whj-status-item">
+                    <div class="whj-status-label">错误码</div>
+                    <div class="whj-status-value" id="whjError">--</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- AGV 状态面板 -->
+        <div class="panel">
+            <h2>📊 AGV 车辆状态</h2>
+            <div class="info-grid">
+                <div class="info-item">
+                    <div class="info-label">X轴速度 (前后)</div>
+                    <div class="info-value" id="speedX">0.00 m/s</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Y轴速度 (左右)</div>
+                    <div class="info-value" id="speedY">0.00 m/s</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Z轴角速度</div>
+                    <div class="info-value" id="speedZ">0.00 °/s</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">当前档位</div>
+                    <div class="info-value" id="gearDisplay">4T4D</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">电池电压</div>
+                    <div class="info-value" id="batVoltage">-- V</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">电池电量</div>
+                    <div class="info-value" id="batSoc">-- %</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 日志面板 -->
+        <div class="panel full-width">
+            <h2>📝 系统日志</h2>
+            <div class="log-container" id="systemLog"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+// ==================== 全局变量 ====================
+let ros = null;
+let isConnected = false;
+let currentGear = 6;
+let isMoving = false;
+let currentDirection = null;
+
+// AGV
+let agvCmdPublisher = null;
+let agvIoPublisher = null;
+let agvSubscriber = null;
+let unlockInterval = null;
+let agvCmdInterval = null;
+
+// WHJ
+let whjCmdPublisher = null;
+let whjStateSubscriber = null;
+
+// Kinco
+let kincoStateSubscriber = null;
+let kincoCmdPublisher = null;
+let kincoCurrentTarget = 0;
+let whjCurrentState = {
+    position: null,
+    speed: null,
+    current: null,
+    voltage: null,
+    temp: null,
+    enabled: false,
+    error: 0
+};
+// 用于追踪哪些值发生了变化，控制视觉反馈
+let whjLastValues = {};
+let whjValidValues = {  // 存储有效的值，忽略 NaN
+    position: null,
+    speed: null,
+    current: null,
+    voltage: null,
+    temp: null,
+    enabled: null  // 使能状态缓存
+};
+// 防止重复操作
+let whjOperationInProgress = false;
+// 使能状态防抖：连续收到相同状态才更新 UI
+let whjEnabledStabilityCounter = 0;
+let whjLastStableEnabled = null;
+
+// AGV 速度
+let currentSpeedX = 0;
+let currentSpeedY = 0;
+let currentSpeedZ = 0;
+
+// ==================== 初始化 ====================
+function init() {
+    addLog('S4综合控制面板已加载', 'info');
+    addLog('AGV控制: 请确保CAN接口已配置', 'info');
+    addLog('WHJ控制: 轨迹规划已启用，大距离移动安全', 'whj');
+    updateSpeedDisplay();
+    // 设置 WHJ 滑块初始值为 200° (约 3.6mm)
+    document.getElementById('whjTargetSlider').value = 4;  // ~200°
+    updateWhjTargetDisplay();
+}
+
+// ==================== ROS2 连接 ====================
+function toggleConnection() {
+    const url = document.getElementById('wsUrl').value;
+    const btn = document.getElementById('connectBtn');
+    const status = document.getElementById('connStatus');
+    
+    if (isConnected) {
+        disconnect();
+        return;
+    }
+    
+    addLog('正在连接到 ' + url, 'info');
+    
+    ros = new ROSLIB.Ros({ url: url });
+    
+    ros.on('connection', function() {
+        isConnected = true;
+        status.className = 'status-indicator connected';
+        btn.textContent = '断开';
+        addLog('已连接到ROS2', 'success');
+        
+        initPublishers();
+        sendUnlockSequence();
+        enableControls(true);
+        
+        // 等待 WHJ 状态更新后同步 Toggle（s4 dev 时电机已自动使能）
+        setTimeout(() => {
+            addLog('正在同步 WHJ 状态...', 'whj');
+            // 等待状态订阅自动更新
+        }, 1000);
+    });
+    
+    ros.on('error', function(error) {
+        addLog('连接错误: ' + error, 'error');
+    });
+    
+    ros.on('close', function() {
+        disconnect();
+    });
+}
+
+function disconnect() {
+    isConnected = false;
+    if (ros) {
+        ros.close();
+        ros = null;
+    }
+    
+    if (unlockInterval) {
+        clearInterval(unlockInterval);
+        unlockInterval = null;
+    }
+    if (agvCmdInterval) {
+        clearInterval(agvCmdInterval);
+        agvCmdInterval = null;
+    }
+    
+    document.getElementById('connStatus').className = 'status-indicator disconnected';
+    document.getElementById('connectBtn').textContent = '连接';
+    enableControls(false);
+    addLog('已断开连接', 'warn');
+}
+
+function initPublishers() {
+    // AGV 发布者
+    agvCmdPublisher = new ROSLIB.Topic({
+        ros: ros,
+        name: '/ctrl_cmd',
+        messageType: 'yhs_can_interfaces/msg/CtrlCmd'
+    });
+    
+    agvIoPublisher = new ROSLIB.Topic({
+        ros: ros,
+        name: '/io_cmd',
+        messageType: 'yhs_can_interfaces/msg/IoCmd'
+    });
+    
+    agvSubscriber = new ROSLIB.Topic({
+        ros: ros,
+        name: '/chassis_info_fb',
+        messageType: 'yhs_can_interfaces/msg/ChassisInfoFb'
+    });
+    agvSubscriber.subscribe(function(msg) {
+        updateAgvState(msg);
+    });
+    
+    // WHJ 发布者
+    whjCmdPublisher = new ROSLIB.Topic({
+        ros: ros,
+        name: '/whj_cmd',
+        messageType: 'whj_can_interfaces/msg/WhjCmd'
+    });
+    
+    whjStateSubscriber = new ROSLIB.Topic({
+        ros: ros,
+        name: '/whj_state',
+        messageType: 'whj_can_interfaces/msg/WhjState'
+    });
+    whjStateSubscriber.subscribe(function(msg) {
+        updateWhjState(msg);
+    });
+    
+    // Kinco
+    kincoStateSubscriber = new ROSLIB.Topic({
+        ros: ros,
+        name: '/kinco_state',
+        messageType: 'kinco_can_interfaces/msg/KincoState'
+    });
+    kincoStateSubscriber.subscribe(function(msg) {
+        updateKincoState(msg);
+    });
+    
+    // Kinco 发布者
+    kincoCmdPublisher = new ROSLIB.Topic({
+        ros: ros,
+        name: '/kinco_cmd',
+        messageType: 'kinco_can_interfaces/msg/KincoCmd'
+    });
+    
+    addLog('AGV、WHJ 和 Kinco 发布者/订阅者已初始化', 'success');
+}
+
+// ==================== AGV 解锁序列 ====================
+function sendUnlockSequence() {
+    addLog('发送AGV解锁序列...', 'info');
+    
+    const sequence = [
+        { unlock: true, lamp: false },
+        { unlock: true, lamp: false },
+        { unlock: false, lamp: false },
+        { unlock: false, lamp: false }
+    ];
+    
+    let step = 0;
+    
+    function sendStep() {
+        if (step < sequence.length && isConnected) {
+            const cmd = new ROSLIB.Message({
+                io_cmd_unlock: sequence[step].unlock,
+                io_cmd_lamp_ctrl: sequence[step].lamp
+            });
+            agvIoPublisher.publish(cmd);
+            step++;
+            setTimeout(sendStep, 20);
+        } else if (isConnected) {
+            addLog('AGV解锁序列完成', 'success');
+            unlockInterval = setInterval(() => {
+                if (isConnected) {
+                    agvIoPublisher.publish(new ROSLIB.Message({
+                        io_cmd_unlock: true,
+                        io_cmd_lamp_ctrl: true
+                    }));
+                }
+            }, 100);
+        }
+    }
+    sendStep();
+}
+
+// ==================== WHJ 控制 ====================
+function whjToggleEnable() {
+    if (!isConnected || !whjCmdPublisher || whjOperationInProgress) return;
+    
+    const toggle = document.getElementById('whjEnableToggle');
+    const statusSpan = document.getElementById('whjEnableStatus');
+    const enable = toggle.checked;
+    
+    whjOperationInProgress = true;
+    
+    // 立即更新 UI 反馈（临时状态）
+    statusSpan.textContent = enable ? '使能中...' : '禁用中...';
+    
+    if (enable) {
+        // 使能流程：先清除错误，再使能
+        addLog('WHJ 开始使能流程...', 'whj');
+        
+        // 第1步：清除错误
+        whjCmdPublisher.publish(new ROSLIB.Message({
+            motor_id: 7,
+            clear_error: true
+        }));
+        
+        setTimeout(() => {
+            // 第2步：使能
+            whjCmdPublisher.publish(new ROSLIB.Message({
+                motor_id: 7,
+                enable: true
+            }));
+            addLog('WHJ 使能命令已发送', 'whj');
+            
+            // 等待状态反馈后释放锁
+            setTimeout(() => {
+                whjOperationInProgress = false;
+            }, 500);
+        }, 200);
+    } else {
+        // 禁用
+        whjCmdPublisher.publish(new ROSLIB.Message({
+            motor_id: 7,
+            enable: false
+        }));
+        addLog('WHJ 禁用命令已发送', 'whj');
+        
+        // 等待状态反馈后释放锁
+        setTimeout(() => {
+            whjOperationInProgress = false;
+        }, 500);
+    }
+}
+
+function whjClearError() {
+    if (!isConnected || !whjCmdPublisher) return;
+    
+    whjCmdPublisher.publish(new ROSLIB.Message({
+        motor_id: 7,
+        clear_error: true
+    }));
+    addLog('WHJ 清除错误命令已发送', 'whj');
+}
+
+// 自动恢复流程：清除错误 → 使能
+function whjRecover() {
+    if (!isConnected || !whjCmdPublisher || whjOperationInProgress) return;
+    
+    whjOperationInProgress = true;
+    addLog('WHJ 开始自动恢复流程...', 'whj');
+    
+    // 第1步：清除错误
+    addLog('  [1/3] 清除错误...', 'whj');
+    whjCmdPublisher.publish(new ROSLIB.Message({
+        motor_id: 7,
+        clear_error: true
+    }));
+    
+    setTimeout(() => {
+        // 第2步：设置位置模式
+        addLog('  [2/3] 设置位置模式...', 'whj');
+        whjCmdPublisher.publish(new ROSLIB.Message({
+            motor_id: 7,
+            work_mode: 3  // POSITION_MODE
+        }));
+        
+        setTimeout(() => {
+            // 第3步：使能
+            addLog('  [3/3] 使能电机...', 'whj');
+            whjCmdPublisher.publish(new ROSLIB.Message({
+                motor_id: 7,
+                enable: true
+            }));
+            
+            // 更新 toggle 状态
+            document.getElementById('whjEnableToggle').checked = true;
+            
+            addLog('WHJ 自动恢复完成', 'whj');
+            whjOperationInProgress = false;
+        }, 200);
+    }, 200);
+}
+
+function updateWhjTargetDisplay() {
+    const mm = document.getElementById('whjTargetSlider').value;
+    const degrees = (mm * 55.5556).toFixed(0);  // mm to degrees
+    document.getElementById('whjTargetValue').textContent = mm + ' mm (' + degrees + '°)';
+}
+
+function whjMoveToTarget() {
+    if (!isConnected || !whjCmdPublisher) return;
+    
+    const mm = parseFloat(document.getElementById('whjTargetSlider').value);
+    const targetDeg = mm * 55.5556;  // Convert mm to degrees
+    const currentDeg = whjCurrentState.position;
+    
+    if (currentDeg !== null && !isNaN(currentDeg)) {
+        const diff = Math.abs(targetDeg - currentDeg);
+        if (diff > 80) {
+            addLog('WHJ 大距离移动: ' + diff.toFixed(1) + '°, 将使用梯形轨迹规划', 'whj');
+        }
+    }
+    
+    const cmd = new ROSLIB.Message({
+        motor_id: 7,
+        target_position_deg: targetDeg
+    });
+    whjCmdPublisher.publish(cmd);
+    addLog('WHJ 移动到 ' + mm + ' mm (' + targetDeg.toFixed(0) + '°)', 'whj');
+}
+
+// 辅助函数：智能更新元素，只在值真正变化时才更新，并添加视觉反馈
+// 忽略 NaN 值，保持上一次的有效显示
+function updateWhjElement(id, newValue, formatter, threshold = 0.01, cacheKey = null) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    
+    // 处理无效值：如果是 NaN/null/undefined，保持当前显示不变
+    if (newValue === null || newValue === undefined || isNaN(newValue)) {
+        // 不更新 DOM，保持上一次的有效值
+        return;
+    }
+    
+    // 更新有效值缓存
+    const key = cacheKey || id;
+    whjValidValues[key] = newValue;
+    
+    const formatted = formatter ? formatter(newValue) : newValue;
+    const lastValue = whjLastValues[id];
+    
+    // 检查值是否发生显著变化（超过阈值）
+    const hasChanged = lastValue === undefined || 
+                       (typeof newValue === 'number' && Math.abs(newValue - lastValue) > threshold) ||
+                       (typeof newValue !== 'number' && newValue !== lastValue);
+    
+    if (hasChanged) {
+        // 只有当值真正变化时才更新 DOM
+        el.textContent = formatted;
+        whjLastValues[id] = newValue;
+        
+        // 添加短暂的视觉反馈（闪烁效果）
+        el.style.transition = 'none';
+        el.style.color = '#fff';
+        el.style.textShadow = '0 0 10px #22c55e';
+        setTimeout(() => {
+            el.style.transition = 'color 0.3s ease, text-shadow 0.3s ease';
+            el.style.color = '';
+            el.style.textShadow = '';
+        }, 100);
+    }
+}
+
+function updateWhjState(msg) {
+    // 更新内部状态（保留 NaN，但显示时忽略）
+    whjCurrentState = {
+        position: msg.position_deg,
+        speed: msg.speed_rpm,
+        current: msg.current_ma,
+        voltage: msg.voltage_v,
+        temp: msg.temperature_c,
+        enabled: msg.is_enabled,
+        error: msg.error_code
+    };
+    
+    // 使用智能更新，忽略 NaN 值，设置不同的阈值
+    // 位置：0.01度
+    updateWhjElement('whjPosition', msg.position_deg, v => v.toFixed(2) + '°', 0.01, 'position');
+    
+    // 毫米：0.0005mm
+    const mm = msg.position_deg && !isNaN(msg.position_deg) ? msg.position_deg * 0.018 : null;
+    updateWhjElement('whjPositionMm', mm, v => v.toFixed(3) + ' mm', 0.0005, 'position');
+    
+    // 速度：0.1 RPM
+    updateWhjElement('whjSpeed', msg.speed_rpm, v => v.toFixed(2), 0.1, 'speed');
+    
+    // 电流：10mA
+    updateWhjElement('whjCurrent', msg.current_ma, v => v.toFixed(0), 10, 'current');
+    
+    // 电压：0.05V
+    updateWhjElement('whjVoltage', msg.voltage_v, v => v.toFixed(1), 0.05, 'voltage');
+    
+    // 温度：0.1°C
+    updateWhjElement('whjTemp', msg.temperature_c, v => v.toFixed(1), 0.1, 'temp');
+    
+    // 使能状态：直接更新，不进行防抖（ROS 端已经防抖）
+    const enabledEl = document.getElementById('whjEnabled');
+    const toggle = document.getElementById('whjEnableToggle');
+    const statusSpan = document.getElementById('whjEnableStatus');
+    
+    // 直接更新 Panel 状态
+    const lastDisplayedEnabled = whjValidValues['enabled'];
+    if (msg.is_enabled !== lastDisplayedEnabled) {
+        whjValidValues['enabled'] = msg.is_enabled;
+        
+        const newEnabledText = msg.is_enabled ? '已使能' : '未使能';
+        enabledEl.textContent = newEnabledText;
+        enabledEl.className = 'whj-status-value ' + (msg.is_enabled ? '' : 'warning');
+        
+        if (msg.is_enabled) {
+            addLog('WHJ 电机已使能', 'whj');
+        }
+    }
+    
+    // 同步 Toggle Switch 状态（不操作时）
+    if (toggle && !whjOperationInProgress) {
+        if (toggle.checked !== msg.is_enabled) {
+            toggle.checked = msg.is_enabled;
+        }
+        const newStatusText = msg.is_enabled ? '已使能' : '未使能';
+        if (statusSpan.textContent !== newStatusText) {
+            statusSpan.textContent = newStatusText;
+            statusSpan.className = 'toggle-status ' + (msg.is_enabled ? '' : 'disabled');
+        }
+    }
+    
+    const errorEl = document.getElementById('whjError');
+    const newErrorText = msg.error_code ? '0x' + msg.error_code.toString(16).toUpperCase() : '无';
+    if (errorEl.textContent !== newErrorText) {
+        errorEl.textContent = newErrorText;
+        errorEl.className = 'whj-status-value ' + (msg.error_code ? 'error' : '');
+        
+        // 错误变化时添加日志
+        if (msg.error_code && whjLastValues['whjError'] !== msg.error_code) {
+            addLog('WHJ 错误码: 0x' + msg.error_code.toString(16).toUpperCase(), 'error');
+        }
+        whjLastValues['whjError'] = msg.error_code;
+    }
+}
+
+// ==================== Kinco 状态更新 ====================
+function updateKincoState(msg) {
+    // 当前位置
+    const posEl = document.getElementById('kincoPosition');
+    if (posEl && msg.position_deg !== undefined && !isNaN(msg.position_deg)) {
+        posEl.textContent = msg.position_deg.toFixed(2) + '°';
+    }
+    
+    // 目标位置
+    const targetEl = document.getElementById('kincoTarget');
+    if (targetEl) {
+        if (msg.target_position_deg !== undefined && !isNaN(msg.target_position_deg)) {
+            targetEl.textContent = msg.target_position_deg.toFixed(1) + '°';
+        } else {
+            targetEl.textContent = '--';
+        }
+    }
+    
+    // 剩余距离
+    const remainingEl = document.getElementById('kincoRemaining');
+    if (remainingEl) {
+        if (msg.remaining_distance_deg !== undefined && !isNaN(msg.remaining_distance_deg)) {
+            const dist = msg.remaining_distance_deg;
+            remainingEl.textContent = (dist > 0 ? '+' : '') + dist.toFixed(1) + '°';
+            remainingEl.className = 'whj-status-value ' + (Math.abs(dist) < 0.5 ? '' : 'warning');
+        } else {
+            remainingEl.textContent = '--';
+        }
+    }
+    
+    // 状态 (使能/到达/错误)
+    const statusEl = document.getElementById('kincoStatus');
+    if (statusEl) {
+        let status = '';
+        let statusClass = '';
+        if (!msg.is_enabled) {
+            status = '未使能';
+            statusClass = 'warning';
+        } else if (msg.error_code) {
+            status = '错误 0x' + msg.error_code.toString(16).toUpperCase();
+            statusClass = 'error';
+        } else if (msg.target_reached) {
+            status = '已到达';
+            statusClass = '';
+        } else {
+            status = '运动中';
+            statusClass = 'warning';
+        }
+        statusEl.textContent = status;
+        statusEl.className = 'whj-status-value ' + statusClass;
+    }
+}
+
+// ==================== Kinco 控制 ====================
+function updateKincoTargetDisplay() {
+    const deg = document.getElementById('kincoTargetSlider').value;
+    document.getElementById('kincoTargetValue').textContent = deg + '°';
+    kincoCurrentTarget = parseFloat(deg);
+}
+
+function kincoMoveToTarget() {
+    if (!isConnected || !kincoCmdPublisher) return;
+    
+    const target = parseFloat(document.getElementById('kincoTargetSlider').value);
+    
+    const cmd = new ROSLIB.Message({
+        node_id: 1,
+        target_position_deg: target,
+        target_speed_rpm: 50.0  // Fixed 50 RPM
+    });
+    kincoCmdPublisher.publish(cmd);
+    addLog('Kinco 移动到 ' + target + '°', 'info');
+}
+
+function kincoGoTo(angle) {
+    if (!isConnected || !kincoCmdPublisher) return;
+    
+    // Update slider
+    document.getElementById('kincoTargetSlider').value = angle;
+    updateKincoTargetDisplay();
+    
+    // Send command
+    const cmd = new ROSLIB.Message({
+        node_id: 1,
+        target_position_deg: angle,
+        target_speed_rpm: 50.0
+    });
+    kincoCmdPublisher.publish(cmd);
+    addLog('Kinco 移动到 ' + angle + '°', 'info');
+}
+
+function kincoSetZero() {
+    if (!isConnected || !kincoCmdPublisher) return;
+    
+    if (!confirm('确定要设置当前位置为零点吗？')) return;
+    
+    const cmd = new ROSLIB.Message({
+        node_id: 1,
+        set_zero: true
+    });
+    kincoCmdPublisher.publish(cmd);
+    addLog('Kinco 设置零点命令已发送', 'info');
+}
+
+// ==================== AGV 控制 ====================
+function setGear(gear) {
+    currentGear = gear;
+    document.getElementById('gear4T4D').className = gear === 6 ? 'gear-btn active' : 'gear-btn';
+    document.getElementById('gearLateral').className = gear === 8 ? 'gear-btn active' : 'gear-btn';
+    const gearNames = {6: '4T4D', 8: '横移'};
+    document.getElementById('gearDisplay').textContent = gearNames[gear];
+    document.getElementById('speedYSetting').style.display = gear === 8 ? 'block' : 'none';
+    addLog('AGV 切换到' + gearNames[gear] + '模式', 'info');
+    stopMove();
+}
+
+function updateSpeedDisplay() {
+    const speedX = parseFloat(document.getElementById('speedXSlider').value);
+    const speedY = parseFloat(document.getElementById('speedYSlider').value);
+    const speedZ = parseFloat(document.getElementById('speedZSlider').value);
+    
+    document.getElementById('speedXValue').textContent = speedX.toFixed(2) + ' m/s';
+    document.getElementById('speedYValue').textContent = speedY.toFixed(2) + ' m/s';
+    document.getElementById('speedZValue').textContent = speedZ.toFixed(0) + ' °/s';
+}
+
+function startMove(direction) {
+    if (!isConnected || isMoving) return;
+    
+    isMoving = true;
+    currentDirection = direction;
+    
+    const maxSpeedX = parseFloat(document.getElementById('speedXSlider').value);
+    const maxSpeedY = parseFloat(document.getElementById('speedYSlider').value);
+    const maxSpeedZ = parseFloat(document.getElementById('speedZSlider').value);
+    const zRad = maxSpeedZ * Math.PI / 180;
+    
+    switch (direction) {
+        case 'forward':
+            currentSpeedX = maxSpeedX;
+            currentSpeedY = 0;
+            currentSpeedZ = 0;
+            break;
+        case 'backward':
+            currentSpeedX = -maxSpeedX;
+            currentSpeedY = 0;
+            currentSpeedZ = 0;
+            break;
+        case 'left':
+            if (currentGear === 6) {
+                currentSpeedX = 0;
+                currentSpeedY = 0;
+                currentSpeedZ = zRad;
+            } else {
+                currentSpeedX = 0;
+                currentSpeedY = maxSpeedY;
+                currentSpeedZ = 0;
+            }
+            break;
+        case 'right':
+            if (currentGear === 6) {
+                currentSpeedX = 0;
+                currentSpeedY = 0;
+                currentSpeedZ = -zRad;
+            } else {
+                currentSpeedX = 0;
+                currentSpeedY = -maxSpeedY;
+                currentSpeedZ = 0;
+            }
+            break;
+    }
+    
+    updateButtonState(direction, true);
+    sendAgvCommand();
+    agvCmdInterval = setInterval(sendAgvCommand, 10);
+    addLog('AGV ' + direction + ' 开始移动', 'info');
+}
+
+function stopMove() {
+    if (!isMoving) return;
+    
+    isMoving = false;
+    currentDirection = null;
+    currentSpeedX = 0;
+    currentSpeedY = 0;
+    currentSpeedZ = 0;
+    
+    if (agvCmdInterval) {
+        clearInterval(agvCmdInterval);
+        agvCmdInterval = null;
+    }
+    
+    updateButtonState(null, false);
+    sendAgvCommand();
+    addLog('AGV 停止移动', 'info');
+}
+
+function sendAgvCommand() {
+    if (!isConnected || !agvCmdPublisher) return;
+    
+    const cmd = new ROSLIB.Message({
+        ctrl_cmd_gear: currentGear,
+        ctrl_cmd_x_linear: currentSpeedX,
+        ctrl_cmd_y_linear: currentSpeedY,
+        ctrl_cmd_z_angular: currentSpeedZ
+    });
+    agvCmdPublisher.publish(cmd);
+}
+
+function updateButtonState(activeDirection, isPressed) {
+    const buttons = {
+        'forward': 'btnForward',
+        'backward': 'btnBackward',
+        'left': 'btnLeft',
+        'right': 'btnRight'
+    };
+    
+    for (const [dir, id] of Object.entries(buttons)) {
+        const btn = document.getElementById(id);
+        if (dir === activeDirection && isPressed) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    }
+}
+
+function emergencyStop() {
+    stopMove();
+    
+    if (isConnected && agvCmdPublisher) {
+        const cmd = new ROSLIB.Message({
+            ctrl_cmd_gear: 0,
+            ctrl_cmd_x_linear: 0,
+            ctrl_cmd_y_linear: 0,
+            ctrl_cmd_z_angular: 0
+        });
+        agvCmdPublisher.publish(cmd);
+    }
+    
+    addLog('🛑 AGV 紧急停止已激活！', 'error');
+    alert('紧急停止已激活！请检查安全后重新连接。');
+}
+
+// ==================== AGV 状态更新 ====================
+function updateAgvState(msg) {
+    if (msg.ctrl_fb) {
+        document.getElementById('speedX').textContent = msg.ctrl_fb.ctrl_fb_x_linear.toFixed(3) + ' m/s';
+        document.getElementById('speedY').textContent = msg.ctrl_fb.ctrl_fb_y_linear.toFixed(3) + ' m/s';
+        const zDeg = msg.ctrl_fb.ctrl_fb_z_angular * 180 / Math.PI;
+        document.getElementById('speedZ').textContent = zDeg.toFixed(1) + ' °/s';
+    }
+    
+    if (msg.bms_fb) {
+        document.getElementById('batVoltage').textContent = msg.bms_fb.bms_fb_voltage.toFixed(1) + ' V';
+    }
+    
+    if (msg.bms_flag_fb) {
+        document.getElementById('batSoc').textContent = msg.bms_flag_fb.bms_flag_fb_soc + ' %';
+    }
+}
+
+// ==================== UI 控制 ====================
+function enableControls(enabled) {
+    // AGV 按钮
+    const agvButtons = ['btnForward', 'btnBackward', 'btnLeft', 'btnRight', 'btnStopCenter'];
+    agvButtons.forEach(id => {
+        document.getElementById(id).disabled = !enabled;
+    });
+    
+    // WHJ 控制
+    document.getElementById('whjEnableToggle').disabled = !enabled;
+    document.getElementById('whjClearBtn').disabled = !enabled;
+    document.getElementById('whjRecoverBtn').disabled = !enabled;
+    document.getElementById('whjMoveBtn').disabled = !enabled;
+    
+    // Kinco 控制
+    document.getElementById('kincoMoveBtn').disabled = !enabled;
+    document.getElementById('kincoBtn0').disabled = !enabled;
+    document.getElementById('kincoBtn90').disabled = !enabled;
+    document.getElementById('kincoBtn180').disabled = !enabled;
+    document.getElementById('kincoBtn270').disabled = !enabled;
+    document.getElementById('kincoSetZeroBtn').disabled = !enabled;
+}
+
+function addLog(message, type) {
+    const log = document.getElementById('systemLog');
+    const entry = document.createElement('div');
+    entry.className = 'log-entry ' + type;
+    const time = new Date().toLocaleTimeString();
+    entry.textContent = '[' + time + '] ' + message;
+    log.appendChild(entry);
+    log.scrollTop = log.scrollHeight;
+}
+
+// ==================== 键盘控制 ====================
+document.addEventListener('keydown', function(e) {
+    if (!isConnected) return;
+    if (e.repeat) return;
+    
+    switch(e.key) {
+        case 'w': case 'W': case 'ArrowUp':
+            startMove('forward');
+            e.preventDefault();
+            break;
+        case 's': case 'S': case 'ArrowDown':
+            startMove('backward');
+            e.preventDefault();
+            break;
+        case 'a': case 'A': case 'ArrowLeft':
+            startMove('left');
+            e.preventDefault();
+            break;
+        case 'd': case 'D': case 'ArrowRight':
+            startMove('right');
+            e.preventDefault();
+            break;
+        case ' ': case 'Escape':
+            stopMove();
+            e.preventDefault();
+            break;
+    }
+});
+
+document.addEventListener('keyup', function(e) {
+    if (!isConnected) return;
+    
+    switch(e.key) {
+        case 'w': case 'W': case 'ArrowUp':
+        case 's': case 'S': case 'ArrowDown':
+        case 'a': case 'A': case 'ArrowLeft':
+        case 'd': case 'D': case 'ArrowRight':
+            stopMove();
+            break;
+    }
+});
+
+// ==================== 页面加载 ====================
+window.onload = init;
+</script>
+</body>
+</html>

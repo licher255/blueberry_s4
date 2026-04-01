@@ -397,6 +397,23 @@ cmd_dev() {
         warn "WHJ failed to start! Check: tail -f /tmp/s4_whj.log"
     fi
     
+    # 5.5 启动 Kinco 节点 (旋转电机，与 AGV 共享 can3)
+    info "Starting Kinco node (rotation motor)..."
+    ros2 run kinco_can_control kinco_can_control_node \
+        --ros-args \
+        -p can_name:=$can_agv_iface \
+        -p node_id:=1 \
+        -p state_publish_rate:=10.0 > /tmp/s4_kinco.log 2>&1 &
+    local kinco_pid=$!
+    echo $kinco_pid > "$PID_DIR/kinco.pid"
+    
+    sleep 2
+    if ps -p $kinco_pid > /dev/null 2>&1; then
+        ok "Kinco started on $can_agv_iface"
+    else
+        warn "Kinco failed to start! Check: tail -f /tmp/s4_kinco.log"
+    fi
+    
     # 6. 启动 Rosbridge
     ros2 launch rosbridge_server rosbridge_websocket_launch.xml port:=$ws_port > /dev/null 2>&1 &
     echo $! > "$PID_DIR/rosbridge.pid"
@@ -435,18 +452,40 @@ cmd_dev() {
         echo ""
         info "Stopping..."
         
-        # 发送禁用命令给 WHJ (优雅关闭)
-        if [ -f "$PID_DIR/whj.pid" ]; then
-            info "Disabling WHJ..."
-            source "$PROJECT_DIR/install/setup.bash" 2>/dev/null && \
-            ros2 topic pub /whj_cmd whj_can_interfaces/msg/WhjCmd "{motor_id: 7, enable: false}" --once 2>/dev/null || true
-            sleep 0.5
+        # 尝试直接发送CAN帧禁用电机（优雅关闭）
+        # 从映射文件读取，避免重新检测
+        local mapping_file="/tmp/s4_can_mapping.conf"
+        local can_agv=""
+        local can_fd=""
+        
+        if [ -f "$mapping_file" ]; then
+            source "$mapping_file" 2>/dev/null || true
+        fi
+        
+        # WHJ禁用: CAN ID 0x07, 数据 [0x02, 0x0A, 0x00, 0x00]
+        # Kinco禁用: CAN ID 0x201, 数据 [0x01, 0x06, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00]
+        if [ -n "$can_fd" ] && ip link show "$can_fd" &>/dev/null; then
+            info "Disabling WHJ motor..."
+            cansend "$can_fd" 007#020A0000 2>/dev/null || true
+            sleep 0.05
+        fi
+        if [ -n "$can_agv" ] && ip link show "$can_agv" &>/dev/null; then
+            info "Disabling Kinco motor..."
+            cansend "$can_agv" 201#0106100000000000 2>/dev/null || true
+            sleep 0.05
         fi
         
         # 停止所有进程
         for f in "$PID_DIR"/*.pid; do
-            [ -f "$f" ] && kill $(cat "$f") 2>/dev/null; rm -f "$f"
+            [ -f "$f" ] && kill $(cat "$f" 2>/dev/null) 2>/dev/null; rm -f "$f"
         done
+        
+        # 强制终止所有相关进程
+        pkill -9 -f "ros2 launch bringup" 2>/dev/null || true
+        pkill -9 -f "rosbridge" 2>/dev/null || true
+        pkill -9 -f "http.server.*8" 2>/dev/null || true
+        pkill -9 -f "whj_can_node" 2>/dev/null || true
+        pkill -9 -f "kinco_can_control_node" 2>/dev/null || true
         
         # 恢复原始 index.html
         if [ -f "$PROJECT_DIR/web_dashboard/index.html.s4backup" ]; then
@@ -469,22 +508,38 @@ cmd_dev() {
 cmd_stop() {
     info "Stopping..."
     
-    # 先禁用 WHJ (优雅关闭)
-    if [ -f "$PID_DIR/whj.pid" ] || pgrep -f "whj_can_node" > /dev/null; then
-        info "Disabling WHJ..."
-        source "$PROJECT_DIR/install/setup.bash" 2>/dev/null && \
-        ros2 topic pub /whj_cmd whj_can_interfaces/msg/WhjCmd "{motor_id: 7, enable: false}" --once 2>/dev/null || true
-        sleep 0.5
+    # 尝试直接发送CAN帧禁用电机
+    local mapping_file="/tmp/s4_can_mapping.conf"
+    local can_agv=""
+    local can_fd=""
+    
+    if [ -f "$mapping_file" ]; then
+        source "$mapping_file" 2>/dev/null || true
+    fi
+    
+    # WHJ禁用: CAN ID 0x07, 数据 [0x02, 0x0A, 0x00, 0x00]
+    # Kinco禁用: CAN ID 0x201, 数据 [0x01, 0x06, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00]
+    if [ -n "$can_fd" ] && ip link show "$can_fd" &>/dev/null; then
+        info "Disabling WHJ motor..."
+        cansend "$can_fd" 007#020A0000 2>/dev/null || true
+        sleep 0.05
+    fi
+    if [ -n "$can_agv" ] && ip link show "$can_agv" &>/dev/null; then
+        info "Disabling Kinco motor..."
+        cansend "$can_agv" 201#0106100000000000 2>/dev/null || true
+        sleep 0.05
     fi
     
     [ -d "$PID_DIR" ] && for f in "$PID_DIR"/*.pid; do
-        [ -f "$f" ] && kill $(cat "$f") 2>/dev/null; rm -f "$f"
+        [ -f "$f" ] && kill $(cat "$f" 2>/dev/null) 2>/dev/null; rm -f "$f"
     done
     
-    pkill -f "ros2 launch bringup" 2>/dev/null || true
-    pkill -f "rosbridge" 2>/dev/null || true
-    pkill -f "http.server.*8" 2>/dev/null || true
-    pkill -f "whj_can_node" 2>/dev/null || true
+    # Kill processes more aggressively to avoid blocking
+    pkill -9 -f "ros2 launch bringup" 2>/dev/null || true
+    pkill -9 -f "rosbridge" 2>/dev/null || true
+    pkill -9 -f "http.server.*8" 2>/dev/null || true
+    pkill -9 -f "whj_can_node" 2>/dev/null || true
+    pkill -9 -f "kinco_can_control_node" 2>/dev/null || true
     
     if [ -f "$PROJECT_DIR/web_dashboard/index.html.s4backup" ]; then
         mv "$PROJECT_DIR/web_dashboard/index.html.s4backup" "$PROJECT_DIR/web_dashboard/index.html"
@@ -536,6 +591,7 @@ cmd_status() {
     echo "Services:"
     pgrep -f "ros2 launch bringup" > /dev/null && echo -e "  ${G}●${R} AGV"
     pgrep -f "whj_can_node" > /dev/null && echo -e "  ${G}●${R} WHJ (with trajectory planning)"
+    pgrep -f "kinco_can_control_node" > /dev/null && echo -e "  ${G}●${R} Kinco (rotation motor)"
     pgrep -f "rosbridge" > /dev/null && echo -e "  ${G}●${R} Rosbridge"
     pgrep -f "http.server" > /dev/null && echo -e "  ${G}●${R} Web ($(cat "$PID_DIR/http.port" 2>/dev/null || echo 8080))"
     echo ""
