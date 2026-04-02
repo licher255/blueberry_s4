@@ -279,6 +279,56 @@ cmd_dev() {
     echo -e "${C}🚀 Starting Blueberry S4...${R}"
     echo ""
     
+    # ========== 驱动检查警告 ==========
+    echo ""
+    echo -e "${Y}╔════════════════════════════════════════════════════════════════╗${R}"
+    echo -e "${Y}║${R}  ⚠️  WARNING: Checking if CAN drivers are installed...         ${Y}║${R}"
+    echo -e "${Y}╚════════════════════════════════════════════════════════════════╝${R}"
+    echo ""
+    
+    local driver_missing=false
+    
+    # 检查 PEAK 驱动 (AGV)
+    if lsusb 2>/dev/null | grep -q "0c72:"; then
+        if lsmod 2>/dev/null | grep -q "^pcan"; then
+            ok "PEAK (pcan) driver loaded - AGV CAN ready"
+        else
+            warn "PEAK (pcan) driver NOT loaded!"
+            echo "       AGV CAN device detected but driver is not installed."
+            echo "       Run: cd drivers/peak-linux-driver-8.18.0 && make && sudo make install"
+            driver_missing=true
+        fi
+    fi
+    
+    # 检查 ZLG 驱动 (WHJ/Kinco)
+    if lsusb 2>/dev/null | grep -iqE "zlg|usbcan"; then
+        if lsmod 2>/dev/null | grep -q "^usbcanfd"; then
+            ok "ZLG (usbcanfd) driver loaded - Device CAN ready"
+        else
+            warn "ZLG (usbcanfd) driver NOT loaded!"
+            echo "       WHJ/Kinco CAN device detected but driver is not installed."
+            echo "       Run: cd drivers/zlg_usbcanfd_2_10 && make && sudo insmod usbcanfd.ko"
+            driver_missing=true
+        fi
+    fi
+    
+    if [ "$driver_missing" = true ]; then
+        echo ""
+        echo -e "${Y}╔════════════════════════════════════════════════════════════════╗${R}"
+        echo -e "${Y}║${R}  ⚠️  CAN drivers missing! Project may fail to start.           ${Y}║${R}"
+        echo -e "${Y}║${R}     See README.md section "1.2 Build CAN Drivers" for details.  ${Y}║${R}"
+        echo -e "${Y}╚════════════════════════════════════════════════════════════════╝${R}"
+        echo ""
+        warn "Continuing in 3 seconds... (Press Ctrl+C to cancel)"
+        sleep 3
+        echo ""
+    else
+        echo ""
+        ok "All CAN drivers ready - proceeding with startup"
+        echo ""
+    fi
+    # ========== 驱动检查结束 ==========
+    
     # 检查环境
     if [ ! -d "$PROJECT_DIR/install" ]; then
         echo "Not compiled yet. Run: ./s4 build"

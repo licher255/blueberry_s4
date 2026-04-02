@@ -17,6 +17,14 @@ YUHESEN FW-Max AGV + RealMan WHJ Lifter + Kinco Rotation Servo + 7× RealSense D
 - ROS2 Humble installed
 - CAN hardware connected
 
+> ⚠️ **WARNING: Driver Installation is Required Before Startup**
+>
+> **You MUST ensure that kernel drivers in the `drivers/` directory are properly compiled, installed, and loaded BEFORE starting the project.** This is a prerequisite for the entire project to run correctly. Without the drivers, CAN devices will not be recognized, causing hardware communication failures.
+>
+> Verification: `lsmod | grep -E "pcan|usbcanfd"` should show drivers are loaded
+>
+> See [1.2 Build CAN Drivers](#12-build-can-drivers-if-needed) section below
+
 ### 1. Clone and Build
 
 #### 1.1 Clone the Repository
@@ -84,6 +92,10 @@ source install/setup.bash
 ```bash
 sudo ./scripts/s4 init
 ```
+
+> ⚠️ **WARNING: Before running this step, make sure drivers are installed!**
+>
+> If `lsmod | grep -E "pcan|usbcanfd"` shows no output, please complete [1.2 Build CAN Drivers](#12-build-can-drivers-if-needed) first.
 
 This will:
 - Load CAN kernel modules
