@@ -286,16 +286,71 @@ class WHJDriver(BaseMotorDriver):
         
         return None, "Timeout"
     
+    def iap_handshake(self, timeout_ms: int = 500, max_retries: int = 3) -> bool:
+        """
+        IAP握手 - 必须在使能电机前完成
+        
+        某些固件版本的WHJ电机需要先进行IAP握手才能响应正常通信命令。
+        即使握手报告失败，电机可能实际上已经准备好通信。
+        
+        Args:
+            timeout_ms: 每次尝试的超时时间（毫秒）
+            max_retries: 最大重试次数
+            
+        Returns:
+            True if handshake successful or max retries reached
+        """
+        iap_cmd = bytes([0x02, 0x49, 0x00])
+        expected_response_id = self.motor_id + 0x100
+        
+        for attempt in range(max_retries):
+            # 清空缓冲区
+            self.can_driver.clear_buffer()
+            
+            # 发送IAP握手命令
+            if not self.can_driver.send(can_id=self.motor_id, data=iap_cmd):
+                time.sleep(0.05 * (attempt + 1))
+                continue
+            
+            # 等待响应
+            start = time.time()
+            checked = 0
+            
+            while (time.time() - start) * 1000 < timeout_ms:
+                frame = self.can_driver.receive(timeout_ms=0)
+                if frame:
+                    checked += 1
+                    if frame.can_id == expected_response_id:
+                        # 响应数据以0x02开头即认为成功
+                        if len(frame.data) >= 1 and frame.data[0] == 0x02:
+                            print(f"[WHJ-{self.motor_id}] IAP handshake successful (attempt {attempt + 1})")
+                            return True
+                    if checked > 100:
+                        break
+                else:
+                    time.sleep(0.001)
+            
+            if attempt < max_retries - 1:
+                time.sleep(0.05 * (attempt + 1))
+        
+        print(f"[WHJ-{self.motor_id}] IAP handshake timeout after {max_retries} attempts, but motor may still work")
+        return False  # 返回False让调用者决定是否继续
+    
     def initialize(self) -> bool:
         """
         初始化电机通信
+        
+        先进行IAP握手（3次尝试），然后ping电机确认通信正常。
         
         Returns:
             True if successful
         """
         print(f"[WHJ-{self.motor_id}] Initializing...")
         
-        # Ping电机
+        # 1. 先进行IAP握手（3次尝试）
+        self.iap_handshake(timeout_ms=500, max_retries=3)
+        
+        # 2. Ping电机确认通信正常
         cmd = WHJProtocol.build_read_frame(self.motor_id, Register.SYS_FW_VERSION, 1)
         resp, err = self.send_command(cmd, timeout_ms=500)
         

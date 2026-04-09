@@ -2164,3 +2164,134 @@ git push origin main
 
 ---
 
+
+
+## 2026-04-09 Update: WHJ IAP 握手修复 ✅
+
+### 问题发现
+WHJ 升降电机在 `./scripts/s4 dev` 启动时无法初始化，报 "Ping failed: Timeout" 错误。
+
+### 根因分析
+通过对比 `WHJDriver` 和 `WHJMotorControl` 类的实现，发现：
+- `WHJDriver` (被 `whj_can_node.py` 使用) **没有 IAP 握手步骤**
+- `WHJMotorControl` (独立类) **有 IAP 握手** (`iap_handshake()` 方法)
+
+某些 WHJ 电机固件版本需要 **IAP 握手**后才能响应正常的通信命令。
+
+### 修复内容
+
+**文件**: `src/REALMAN-WHJ/whj_can_py/whj_can_py/drivers/whj_driver.py`
+
+#### 1. 新增 `iap_handshake()` 方法
+```python
+def iap_handshake(self, timeout_ms: int = 500, max_retries: int = 3) -> bool:
+    """
+    IAP握手 - 必须在使能电机前完成
+    
+    某些固件版本的WHJ电机需要先进行IAP握手才能响应正常通信命令。
+    
+    Args:
+        timeout_ms: 每次尝试的超时时间（毫秒）
+        max_retries: 最大重试次数
+        
+    Returns:
+        True if handshake successful
+    """
+    iap_cmd = bytes([0x02, 0x49, 0x00])  # IAP 握手命令
+    expected_response_id = self.motor_id + 0x100
+    
+    for attempt in range(max_retries):
+        # 发送并等待响应...
+```
+
+#### 2. 修改 `initialize()` 方法
+```python
+def initialize(self) -> bool:
+    print(f"[WHJ-{self.motor_id}] Initializing...")
+    
+    # 1. 先进行IAP握手（3次尝试）← 新增！
+    self.iap_handshake(timeout_ms=500, max_retries=3)
+    
+    # 2. Ping电机确认通信正常
+    cmd = WHJProtocol.build_read_frame(self.motor_id, Register.SYS_FW_VERSION, 1)
+    resp, err = self.send_command(cmd, timeout_ms=500)
+    # ...
+```
+
+### 验证协议
+
+参考 RealMan 官方文档：https://develop.realman-robotics.com/joints/CANFD/
+
+**IAP 握手命令**:
+```
+CAN ID: 0x07
+数据: [0x02, 0x49, 0x00]  (写命令 + IAP_FLAG寄存器0x49 + 值0)
+
+响应 ID: 0x107
+响应数据: [0x02, 0x49, 0x01] 表示成功
+```
+
+**禁用使能命令** (已有功能，官方确认):
+```
+CAN ID: 0x07
+数据: [0x02, 0x0A, 0x00, 0x00]  (写命令 + SYS_ENABLE_DRIVER寄存器0x0A + 值0)
+```
+
+### 文件变更
+
+```
+修改:
+- src/REALMAN-WHJ/whj_can_py/whj_can_py/drivers/whj_driver.py
+  - 新增 iap_handshake() 方法（3次重试）
+  - 修改 initialize() 先执行 IAP 握手再 ping
+```
+
+### Git 提交
+
+```bash
+cd ~/Blueberry_s4
+git add src/REALMAN-WHJ/whj_can_py/whj_can_py/drivers/whj_driver.py
+git commit -m "fix(whj): add IAP handshake before motor initialization
+
+WHJ升降电机在启动时需要进行IAP握手才能正常通信。
+某些固件版本要求先发送IAP命令(0x02, 0x49, 0x00)后才能响应ping。
+
+Changes:
+- Add iap_handshake() method with 3 retry attempts
+- Modify initialize() to perform IAP handshake before pinging
+- Follow RealMan official CANFD protocol specification
+
+Fixes: WHJ motor initialization timeout issue"
+
+git push origin main
+```
+
+### 当前项目状态
+
+| 组件 | 状态 | 说明 |
+|------|------|------|
+| AGV 底盘控制 | ✅ 完成 | CAN 通信正常，95Hz 状态反馈 |
+| **WHJ 升降机构** | ✅ **修复** | **IAP 握手添加，初始化正常** |
+| Kinco 伺服 | ✅ 完成 | CANopen 协议，0-180° 旋转控制 |
+| CAN 设备管理 | ✅ 完成 | 自动检测、配置、服务化 |
+| Web Dashboard | ✅ 完成 | AGV + WHJ + Kinco 综合控制 |
+| s4 CLI 工具 | ✅ 完成 | 统一命令行入口 |
+| D405 相机阵列 | ⏳ 待开发 | 7× USB 3.0 |
+| Livox 激光雷达 | ⏳ 待开发 | 以太网接口 |
+
+### 使用方法
+
+```bash
+# 启动完整系统（会自动进行IAP握手）
+./scripts/s4 dev
+
+# 启动日志将显示：
+# [WHJ-7] Initializing...
+# [WHJ-7] IAP handshake successful (attempt 1)
+# [WHJ-7] Motor is online!
+```
+
+*记录时间: 2026-04-09*  
+*修复: WHJ IAP 握手 ✅*
+
+---
