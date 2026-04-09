@@ -1,1 +1,0 @@
-cmd_/home/hkclr/Blueberry_s4/drivers/usbcanfd200_400u_2.10/usbcanfd.mod := printf '%s\n'   usbcanfd.o | awk '!x[$$0]++ { print("/home/hkclr/Blueberry_s4/drivers/usbcanfd200_400u_2.10/"$$0) }' > /home/hkclr/Blueberry_s4/drivers/usbcanfd200_400u_2.10/usbcanfd.mod

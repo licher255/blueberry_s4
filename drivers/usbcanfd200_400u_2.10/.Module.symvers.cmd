@@ -1,1 +1,0 @@
-cmd_/home/hkclr/Blueberry_s4/drivers/usbcanfd200_400u_2.10/Module.symvers := sed 's/\.ko$$/\.o/' /home/hkclr/Blueberry_s4/drivers/usbcanfd200_400u_2.10/modules.order | scripts/mod/modpost -m   -o /home/hkclr/Blueberry_s4/drivers/usbcanfd200_400u_2.10/Module.symvers -e -i Module.symvers   -T -

@@ -5,6 +5,7 @@
 ## Overview
 
 ROS2 Humble driver for **RealMan WHJ Lifter Motor** with trapezoidal trajectory planning.
+https://develop.realman-robotics.com/joints/CANFD/memoryControlTable/
 
 **Key Features**:
 - SocketCAN-based (no proprietary libraries)

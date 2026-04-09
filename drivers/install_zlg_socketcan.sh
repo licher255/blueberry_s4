@@ -9,7 +9,7 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-DRIVER_DIR="/home/hkclr/Blueberry_s4/drivers/zlg_socketcan"
+DRIVER_DIR="/home/hkclr/Blueberry_s4/drivers/zlg_usbcanfd_2_10"
 
 echo -e "${BLUE}============================================${NC}"
 echo -e "${BLUE}  ZLG SocketCAN 驱动安装${NC}"

@@ -38,7 +38,7 @@ can_devices:
 driver_load_order:
   - name: "usbcanfd"
     module: "usbcanfd"
-    path: "drivers/usbcanfd200_400u_2.10/usbcanfd.ko"
+    path: "drivers/zlg_usbcanfd_2_10/usbcanfd.ko"
     wait_time: 3
   - name: "pcan"
     module: "pcan"

@@ -1,1 +1,0 @@
-cmd_/home/hkclr/Blueberry_s4/drivers/usbcanfd200_400u_2.10/usbcanfd.ko := ld -r -EL  -maarch64elf -z noexecstack --build-id=sha1  -T scripts/module.lds -o /home/hkclr/Blueberry_s4/drivers/usbcanfd200_400u_2.10/usbcanfd.ko /home/hkclr/Blueberry_s4/drivers/usbcanfd200_400u_2.10/usbcanfd.o /home/hkclr/Blueberry_s4/drivers/usbcanfd200_400u_2.10/usbcanfd.mod.o;  true

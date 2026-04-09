@@ -1,1 +1,0 @@
-cmd_/home/hkclr/Blueberry_s4/drivers/usbcanfd200_400u_2.10/modules.order := {   echo /home/hkclr/Blueberry_s4/drivers/usbcanfd200_400u_2.10/usbcanfd.ko; :; } | awk '!x[$$0]++' - > /home/hkclr/Blueberry_s4/drivers/usbcanfd200_400u_2.10/modules.order

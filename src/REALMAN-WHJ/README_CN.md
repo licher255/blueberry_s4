@@ -5,7 +5,7 @@
 ## 概述
 
 **RealMan WHJ 升降电机** 的 ROS2 Humble 驱动，带梯形轨迹规划功能。
-
+https://develop.realman-robotics.com/joints/CANFD/memoryControlTable/
 **主要特性**:
 - 基于 SocketCAN（无需专有库）
 - 支持 CAN-FD（1M/5M）
