@@ -124,6 +124,50 @@ h2.agv { color: #00d4ff; border-bottom-color: rgba(0, 212, 255, 0.4); }
 .btn-connect { background: linear-gradient(135deg, #00d4ff, #0099cc); color: #fff; }
 .btn-enable { background: linear-gradient(135deg, #22c55e, #16a34a); color: #fff; }
 .btn-disable { background: linear-gradient(135deg, #ef4444, #dc2626); color: #fff; }
+
+/* Toggle Switch */
+.toggle-switch {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+}
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+.toggle-slider {
+    position: relative;
+    width: 50px;
+    height: 26px;
+    background: linear-gradient(135deg, #ef4444, #dc2626);
+    border-radius: 13px;
+    transition: all 0.3s ease;
+}
+.toggle-slider:before {
+    content: "";
+    position: absolute;
+    height: 20px;
+    width: 20px;
+    left: 3px;
+    bottom: 3px;
+    background: white;
+    border-radius: 50%;
+    transition: all 0.3s ease;
+}
+.toggle-switch input:checked + .toggle-slider {
+    background: linear-gradient(135deg, #22c55e, #16a34a);
+}
+.toggle-switch input:checked + .toggle-slider:before {
+    transform: translateX(24px);
+}
+.toggle-label {
+    font-size: 0.9rem;
+    font-weight: 600;
+    min-width: 60px;
+}
 .btn-clear { background: linear-gradient(135deg, #f59e0b, #d97706); color: #fff; }
 .btn-send { background: linear-gradient(135deg, #a855f7, #7c3aed); color: #fff; }
 .btn-kinco { background: linear-gradient(135deg, #c084fc, #a855f7); color: #fff; }
@@ -142,6 +186,10 @@ h2.agv { color: #00d4ff; border-bottom-color: rgba(0, 212, 255, 0.4); }
     padding: 10px; 
     border-radius: 6px; 
     border: 1px solid rgba(100, 100, 200, 0.2); 
+    min-height: 60px;  /* 固定高度防止闪动 */
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
 }
 .status-label { font-size: 0.75rem; color: #888; margin-bottom: 3px; }
 .status-value { 
@@ -149,6 +197,9 @@ h2.agv { color: #00d4ff; border-bottom-color: rgba(0, 212, 255, 0.4); }
     color: #00d4ff; 
     font-weight: 600; 
     font-family: monospace; 
+    white-space: nowrap;  /* 防止换行 */
+    overflow: hidden;     /* 隐藏溢出 */
+    text-overflow: ellipsis;  /* 显示省略号 */
 }
 .status-value.whj { color: #22c55e; }
 .status-value.kinco { color: #c084fc; }
@@ -368,7 +419,7 @@ input[type="range"]::-webkit-slider-thumb {
             <!-- WHJ状态 -->
             <div class="panel">
                 <h2 class="whj">🛗 WHJ 升降电机</h2>
-                <div class="status-grid">
+                <div class="status-grid" style="grid-template-columns: repeat(3, 1fr);">
                     <div class="status-item">
                         <div class="status-label">位置 (度)</div>
                         <div class="status-value whj" id="whjPositionDeg">--</div>
@@ -378,8 +429,12 @@ input[type="range"]::-webkit-slider-thumb {
                         <div class="status-value whj" id="whjPositionMm">--</div>
                     </div>
                     <div class="status-item">
-                        <div class="status-label">电流/电压</div>
-                        <div class="status-value whj" id="whjCurrentVoltage">--</div>
+                        <div class="status-label">电流</div>
+                        <div class="status-value whj" id="whjCurrent">--</div>
+                    </div>
+                    <div class="status-item">
+                        <div class="status-label">电压</div>
+                        <div class="status-value whj" id="whjVoltage">--</div>
                     </div>
                     <div class="status-item">
                         <div class="status-label">温度</div>
@@ -505,14 +560,15 @@ input[type="range"]::-webkit-slider-thumb {
                     
                     <div class="button-row">
                         <button class="btn btn-enable" id="whjMoveBtn" onclick="whjMoveToTarget()" disabled>移动</button>
-                        <button class="btn btn-clear" onclick="whjGoTo(0)" disabled>0mm</button>
-                        <button class="btn btn-clear" onclick="whjGoTo(450)" disabled>450mm</button>
-                        <button class="btn btn-clear" onclick="whjGoTo(900)" disabled>900mm</button>
                     </div>
                     
                     <div class="button-row">
-                        <button class="btn btn-enable" id="whjEnableBtn" onclick="whjToggleEnable()" disabled>使能</button>
-                        <button class="btn btn-clear" onclick="whjRecover()" disabled>恢复</button>
+                        <label class="toggle-switch" id="whjEnableToggleLabel" style="opacity: 0.5;">
+                            <input type="checkbox" id="whjEnableToggle" onchange="whjToggleEnable()" disabled>
+                            <span class="toggle-slider"></span>
+                            <span class="toggle-label" id="whjEnableLabel">未使能</span>
+                        </label>
+                        <button class="btn btn-clear" id="whjRecoverBtn" onclick="whjRecover()" disabled>恢复</button>
                     </div>
                 </div>
                 
@@ -528,13 +584,9 @@ input[type="range"]::-webkit-slider-thumb {
                     
                     <div class="button-row">
                         <button class="btn btn-send" id="kincoMoveBtn" onclick="kincoMoveToTarget()" disabled>移动</button>
-                        <button class="btn btn-kinco" onclick="kincoGoTo(0)" disabled>0°</button>
-                        <button class="btn btn-kinco" onclick="kincoGoTo(90)" disabled>90°</button>
-                        <button class="btn btn-kinco" onclick="kincoGoTo(180)" disabled>180°</button>
-                    </div>
-                    
-                    <div class="button-row">
-                        <button class="btn btn-clear" onclick="kincoSetZero()" disabled>⚠️ 设置零点</button>
+                        <button class="btn btn-kinco" id="kincoBtn0" onclick="kincoGoTo(0)" disabled>0°</button>
+                        <button class="btn btn-kinco" id="kincoBtn90" onclick="kincoGoTo(90)" disabled>90°</button>
+                        <button class="btn btn-kinco" id="kincoBtn180" onclick="kincoGoTo(180)" disabled>180°</button>
                     </div>
                 </div>
             </div>
@@ -566,6 +618,10 @@ let currentSpeedX = 0, currentSpeedY = 0, currentSpeedZ = 0;
 // 滑块是否已初始化（连接时同步一次）
 let whjSliderInitialized = false;
 let kincoSliderInitialized = false;
+
+// WHJ 使能状态跟踪（防止循环触发）
+let whjEnabled = false;
+let isUserToggling = false;  // 用户正在操作 toggle，暂停状态同步
 
 // 伺服错误代码定义（WHJ和Kinco都使用16位错误码）
 const SERVO_ERROR_CODES = {
@@ -811,16 +867,42 @@ function whjGoTo(mm) {
 }
 
 function whjToggleEnable() {
-    if (!isConnected) return;
-    whjCmdPub.publish(new ROSLIB.Message({ motor_id: 7, enable: true }));
-    addLog('WHJ使能命令已发送', 'info');
+    if (!isConnected || isUserToggling) return;
+    
+    const toggle = document.getElementById('whjEnableToggle');
+    const wantEnable = toggle.checked;
+    
+    isUserToggling = true;  // 标记用户操作开始
+    
+    whjCmdPub.publish(new ROSLIB.Message({ motor_id: 7, enable: wantEnable }));
+    addLog('WHJ ' + (wantEnable ? '使能' : '禁能') + ' 命令已发送', 'info');
+    
+    // 2秒后恢复状态同步（给ROS消息回传留时间）
+    setTimeout(() => {
+        isUserToggling = false;
+    }, 2000);
 }
 
 function whjRecover() {
     if (!isConnected) return;
+    addLog('WHJ恢复中...', 'info');
+    
+    // Step 1: 清除错误
     whjCmdPub.publish(new ROSLIB.Message({ motor_id: 7, clear_error: true }));
-    setTimeout(() => whjCmdPub.publish(new ROSLIB.Message({ motor_id: 7, enable: true })), 200);
-    addLog('WHJ恢复命令已发送', 'info');
+    addLog('  -> 清除错误', 'info');
+    
+    // Step 2: 等待100ms后设置位置模式
+    setTimeout(() => {
+        whjCmdPub.publish(new ROSLIB.Message({ motor_id: 7, work_mode: 3 }));  // 3 = POSITION_MODE
+        addLog('  -> 设置位置模式', 'info');
+        
+        // Step 3: 再等待200ms后使能
+        setTimeout(() => {
+            whjCmdPub.publish(new ROSLIB.Message({ motor_id: 7, enable: true }));
+            addLog('  -> 使能电机', 'info');
+            addLog('WHJ恢复命令序列已发送完成', 'success');
+        }, 200);
+    }, 100);
 }
 
 function whjClearError() {
@@ -896,10 +978,25 @@ function updateWhjState(msg) {
         }
     }
     if (msg.current_ma !== undefined) {
-        document.getElementById('whjCurrentVoltage').textContent = msg.current_ma.toFixed(2) + 'mA / ' + (msg.voltage_v || 0).toFixed(2) + 'V';
+        document.getElementById('whjCurrent').textContent = msg.current_ma.toFixed(1) + 'mA';
+        document.getElementById('whjVoltage').textContent = (msg.voltage_v || 0).toFixed(1) + 'V';
     }
     if (msg.temperature_c !== undefined) {
         document.getElementById('whjTemp').textContent = msg.temperature_c.toFixed(1) + '°C';
+    }
+    
+    // 更新使能状态 toggle switch（仅在用户不操作时）
+    if (msg.is_enabled !== undefined && !isUserToggling) {
+        whjEnabled = msg.is_enabled;
+        const toggle = document.getElementById('whjEnableToggle');
+        const label = document.getElementById('whjEnableLabel');
+        if (toggle) {
+            toggle.checked = whjEnabled;
+        }
+        if (label) {
+            label.textContent = whjEnabled ? '已使能' : '未使能';
+            label.style.color = whjEnabled ? '#22c55e' : '#ef4444';
+        }
     }
     
     // 显示错误代码和解释
@@ -954,12 +1051,17 @@ function updateKincoState(msg) {
 // ==================== UI控制 ====================
 function enableControls(enabled) {
     const ids = ['btnForward', 'btnBackward', 'btnLeft', 'btnRight', 'btnStopCenter',
-                 'whjMoveBtn', 'whjEnableBtn', 'kincoMoveBtn',
-                 'agvClearBtn', 'whjClearBtn', 'kincoClearBtn'];
+                 'whjMoveBtn', 'kincoMoveBtn', 'kincoBtn0', 'kincoBtn90', 'kincoBtn180',
+                 'agvClearBtn', 'whjClearBtn', 'kincoClearBtn', 'whjRecoverBtn'];
     ids.forEach(id => {
         const el = document.getElementById(id);
         if (el) el.disabled = !enabled;
     });
+    // Enable toggle switch
+    const toggle = document.getElementById('whjEnableToggle');
+    const toggleLabel = document.getElementById('whjEnableToggleLabel');
+    if (toggle) toggle.disabled = !enabled;
+    if (toggleLabel) toggleLabel.style.opacity = enabled ? '1' : '0.5';
 }
 
 function addLog(message, type) {
